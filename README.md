@@ -7,6 +7,7 @@ Codyssey 미션 B3-2 "내가 고친 코드 설명을 AI가 대신 써주는 도�
 
 | 문서 | 내용 |
 | --- | --- |
+| [docs/08-bonus-1-report.md](docs/08-bonus-1-report.md) | 보너스 1: 실제 저장소에 적용한 PR 링크와 "AI 초안 → 최종 PR" 변경점 |
 | [docs/01-mission-guide.md](docs/01-mission-guide.md) | 요구사항 분석, 설계, 구현 순서, 보너스 진행법, 점검표 |
 | [docs/02-learning-materials.md](docs/02-learning-materials.md) | HTTP/REST, Messages API, 파라미터, git·subprocess, 프롬프트, 검증, 보안·비용 학습 자료 |
 | [docs/03-evaluation-answers.md](docs/03-evaluation-answers.md) | 과제 목표 5문항 답변과 예상 추가 질문 |
@@ -46,9 +47,22 @@ setx AI_API_KEY "YOUR_KEY"              # Windows (새 터미널부터 적용)
 | --- | --- | --- |
 | `AI_API_KEY` | API 키. 제공자와 무관하게 우선 사용 | 필수 |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | `AI_API_KEY` 가 없을 때 제공자별로 읽음 | 없음 |
-| `AI_PROVIDER` | 기본 제공자 (`claude` 또는 `openai`) | `claude` |
+| `AI_API_URL` | 프록시 주소. 설정하면 그 아래 `/v1/...` 경로로 요청 (https 만 허용, 로컬은 http 가능) | 공식 API 주소 |
+| `AI_API_MODEL` | 기본 모델 덮어쓰기 | 제공자별 기본값 |
+| `AI_SMALL_FAST_MODEL` | `--fast` 옵션이 쓰는 작고 빠른 모델 | claude `claude-haiku-4-5` / openai `gpt-4.1-nano` |
+| `AI_PROVIDER` | 요청 형식 (`claude` = Messages API, `openai` = Chat Completions) | `AI_API_URL` 이 있으면 `openai`, 없으면 `claude` |
 | `AI_GITGEN_HOME` | 모델 레지스트리 파일 위치 | `~/.ai-gitgen/` |
-| `AI_API_BASE_URL` | 프록시나 테스트 서버로 엔드포인트를 바꿀 때 | 공식 API 주소 |
+
+예: 수업용 프록시(OpenAI 호환 형식)를 쓰는 설정
+
+```bash
+export AI_API_KEY="YOUR_KEY"
+export AI_API_URL=https://copa.codyssey.kr
+export AI_API_MODEL=claude-sonnet-4
+export AI_SMALL_FAST_MODEL=claude-haiku-4
+```
+
+프록시가 어떤 형식을 받는지 모르면 `curl "$AI_API_URL/v1/models" -H "authorization: Bearer $AI_API_KEY"` 로 모델 목록이 나오는지 확인하세요. Anthropic 형식만 받는 프록시라면 `AI_PROVIDER=claude` 를 함께 설정합니다.
 
 키가 없으면 다음 메시지와 함께 종료 코드 1 로 끝납니다.
 
@@ -74,8 +88,10 @@ python3 -m ai_gitgen commit --provider openai     # OpenAI 로 생성
 
 | 옵션 | 기본값 | 설명 |
 | --- | --- | --- |
-| `--provider` | `claude` | `claude` 또는 `openai` |
-| `--model` | claude `claude-sonnet-4-6`, openai `gpt-4.1-mini` | 모델 ID |
+| `--provider` | `claude` (`AI_API_URL` 설정 시 `openai`) | 요청 형식 `claude` 또는 `openai` |
+| `--model` | `AI_API_MODEL`, 없으면 claude `claude-sonnet-4-6` / openai `gpt-4.1-mini` | 모델 ID |
+| `--fast` | 꺼짐 | `AI_SMALL_FAST_MODEL`(없으면 제공자별 소형 모델)로 생성. `--model` 과 함께 쓸 수 없음 |
+| `--base` (pr 전용) | `origin/HEAD` → `main` → `master` 자동 탐지 | PR 비교 기준 브랜치. 기준 이후 커밋과 미커밋 변경을 함께 수집 |
 | `--temperature` | `0.3` | 0.0(결정적) ~ 1.0(다양). 커밋/PR 은 낮은 값 권장 |
 | `--max-tokens` | commit `512`, pr `1024` | 출력 토큰 상한. 잘리면 `[WARN]` 출력 |
 | `--safe-mode` | 꺼짐 | 5장 참고 |
@@ -93,55 +109,62 @@ python3 -m ai_gitgen pr > /tmp/pr.md      # 첫 블록이 제목, 다음 블록�
 
 ## 4. 출력 예시
 
-> 아래 출력은 이 저장소의 테스트용 데모 저장소(`sanitizer/rules.py` 에 GitHub 토큰 마스킹 규칙을 추가한 변경)에서 실제로 실행해 얻은 로그입니다.
-> 단, 이 환경에는 API 키가 없어 **모델 응답 부분은 로컬 모의 서버가 돌려준 준비된 텍스트**입니다. 실제 키로 실행하면 문구는 달라집니다.
-> 재현 방법은 [docs/07-result-report.md](docs/07-result-report.md) 3장에 있습니다.
+> 커밋 메시지와 PR 초안 예시는 이전 미션 저장소 [codyssey-b2-1](https://github.com/newids/codyssey-b2-1) 의 `feature/search-amount-range` 브랜치에서
+> 수업용 프록시(`claude-sonnet-4`)로 **실제 생성**한 출력입니다(2026-10-13). 이 초안을 검토·수정해 올린 PR 과 수정 내역은 [docs/08-bonus-1-report.md](docs/08-bonus-1-report.md)에 있습니다.
+> 변경 없음·오류·레지스트리 예시는 로컬 모의 서버로 재현한 것입니다([docs/07-result-report.md](docs/07-result-report.md) 3장).
 
 ### 커밋 메시지
 
 ```text
 $ python -m ai_gitgen commit --safe-mode
-[INFO] Git status 수집 완료: 3개 파일 변경 감지
-[INFO] Git diff 수집 완료: 32줄
-[INFO] safe-mode: 1개 항목 마스킹, 1개 파일 생략
-[INFO] AI API 요청 중... (model=claude-sonnet-4-6, temperature=0.3, max_tokens=512)
-[INFO] AI API 호출 횟수: 1회 / 토큰 사용: 입력 1,842 · 출력 69
+[INFO] Git status 수집 완료: 6개 파일 변경 감지
+[INFO] Git diff 수집 완료: 143줄
+[INFO] safe-mode: 0개 항목 마스킹, 0개 파일 생략
+[INFO] AI API 요청 중... (provider=openai, model=claude-sonnet-4, temperature=0.3, max_tokens=512, url=https://copa.codyssey.kr)
+[INFO] AI API 호출 횟수: 1회 / 토큰 사용: 입력 3,552 · 출력 145
 [DONE] 커밋 메시지 생성 완료
 
 --- Commit Message ---
-feat(sanitizer): GitHub 토큰 마스킹 규칙 추가
+feat(search): 금액 범위 필터 옵션 추가 (--min-amount, --max-amount)
 
-- sanitizer.py 의 MASK_RULES 에 ghp_/gho_ 접두 토큰 정규식 추가
-- tests/test_sanitizer.py 에 GitHub 토큰 마스킹 케이스 추가
+- models.py의 SearchCriteria에 min_amount/max_amount 필드 및 유효성 검사 추가
+- cli.py, commands.py에 --min-amount/--max-amount 인자 파싱 및 전달 처리 추가
+- test_cli.py, test_services.py에 금액 범위 필터 관련 테스트 케이스 추가
 ----------------------
 ```
 
 ### PR 초안
 
+`pr` 은 기준 브랜치(`main`) 이후의 커밋과 미커밋 변경을 함께 수집하므로, 커밋을 마친 뒤에도 실행할 수 있습니다.
+
 ```text
-$ python -m ai_gitgen pr --context "safe-mode 마스킹 범위 확장" --safe-mode
-[INFO] 현재 브랜치: feature/mask-github-token
-[INFO] Git status 수집 완료: 3개 파일 변경 감지
-[INFO] Git diff 수집 완료: 32줄
-[INFO] safe-mode: 1개 항목 마스킹, 1개 파일 생략
-[INFO] AI API 요청 중... (model=claude-sonnet-4-6, temperature=0.3, max_tokens=1024)
-[INFO] AI API 호출 횟수: 1회 / 토큰 사용: 입력 1,962 · 출력 215
+$ python -m ai_gitgen pr --safe-mode --context "search 가 날짜·카테고리·키워드·태그로만 걸러져서 '5만원 이상 지출만 보기' 같은 금액 기준 조회가 불가능했음"
+[INFO] 현재 브랜치: feature/search-amount-range
+[INFO] 기준 브랜치 main 이후 커밋 1개 포함
+[INFO] Git status 수집 완료: 6개 파일 변경 감지
+[INFO] Git diff 수집 완료: 143줄
+[INFO] safe-mode: 0개 항목 마스킹, 0개 파일 생략
+[INFO] AI API 요청 중... (provider=openai, model=claude-sonnet-4, temperature=0.3, max_tokens=1024, url=https://copa.codyssey.kr)
+[INFO] AI API 호출 횟수: 1회 / 토큰 사용: 입력 3,800 · 출력 580
 [DONE] PR 초안 생성 완료
 
 --- PR Title ---
-feat: safe-mode 마스킹 규칙에 GitHub 토큰 추가
+feat(search): 금액 범위 필터 옵션(--min-amount, --max-amount) 추가
 
 --- PR Body ---
 ## Why
-- safe-mode 가 AWS/Anthropic 키는 가리지만 GitHub 개인 액세스 토큰(ghp_)은 그대로 전송되고 있었습니다.
+- `search` 명령이 날짜·카테고리·키워드·태그 기준만 지원해 '5만원 이상 지출만 보기' 같은 금액 기준 조회가 불가능했음
 
 ## What
-- sanitizer.py: `gh[pousr]_` 접두 토큰을 잡는 GITHUB_TOKEN 규칙 추가
-- tests/test_sanitizer.py: GitHub 토큰이 `[MASKED:GITHUB_TOKEN]` 으로 치환되는지 확인하는 테스트 추가
+- `budget_app/models.py`: `SearchCriteria`에 `min_amount`, `max_amount` 필드 추가 및 `matches()` 메서드에 양 끝 포함 금액 필터 로직 구현; `min_amount > max_amount`일 때 `ValidationError` 발생
+- `budget_app/cli.py`: `search` 서브커맨드에 `--min-amount`, `--max-amount` 인자 등록
+- `budget_app/commands.py`: `cmd_search`에서 두 옵션을 파싱해 `SearchCriteria`에 전달
+- `README.md`: `search` 명령 옵션 표와 사용 예시에 금액 범위 옵션 문서화
 
 ## How to Test
-- `python -m unittest tests.test_sanitizer`
-- 토큰이 포함된 파일을 수정한 뒤 `python -m ai_gitgen commit --safe-mode --dry-run` 으로 `[MASKED:GITHUB_TOKEN]` 확인
+- `tests/test_cli.py`의 `test_search_by_amount_range` 실행: `python -m pytest tests/test_cli.py::CliFlowTests::test_search_by_amount_range -v`
+- `tests/test_services.py`의 금액 범위 관련 테스트 실행: `python -m pytest tests/test_services.py::LedgerTests::test_search_filters_by_amount_range_inclusive tests/test_services.py::LedgerTests::test_search_rejects_min_amount_greater_than_max -v`
+- 직접 확인: `python -m budget_app search --type expense --min-amount 50000` 실행 후 50,000원 이상 지출만 출력되는지 확인; `--min-amount 200 --max-amount 100` 입력 시 종료 코드 1과 "최소 금액" 오류 메시지 출력 확인
 ---------------
 ```
 
@@ -277,7 +300,7 @@ ai_gitgen/
   validators.py      파싱, 규칙 검증, 후처리
   formatter.py       [INFO]/[WARN]/[ERROR]/[DONE] 로그(stderr), 구분선 블록(stdout)
   errors.py          예외 클래스
-tests/               115개 단위·통합 테스트 (API 키 불필요)
+tests/               129개 단위·통합 테스트 (API 키 불필요)
 docs/                가이드, 학습 자료, 평가 답변, 프롬프트, 결과 보고서
 ```
 
@@ -296,5 +319,7 @@ API 키 없이 실행됩니다. HTTP 전송은 mock 으로, AI 클라이언트�
 - **검증 실패는 후처리 우선, 구조 결함만 1회 재생성.** 호출 1~2회 제한을 지키면서 길이·기호 결함은 비용 없이 고칩니다.
 - **결과는 초안.** 도구가 git 에 직접 쓰지 않고 stdout 으로 내보냅니다. 사용자가 검토 후 `git commit -F` 등으로 적용합니다.
 - **새 파일도 내용 수집.** 추적되지 않은 파일은 `git diff` 에 나오지 않으므로 `git diff --no-index /dev/null <file>` 로 수집합니다(200KB 초과·바이너리 제외).
+- **`pr` 은 브랜치 전체를 본다.** `commit` 은 미커밋 변경만 보지만, PR 은 보통 커밋을 마친 뒤 쓰므로 `git diff <base>...HEAD` 와 커밋 제목 목록(`git log`)을 함께 수집해 Why/What 의 근거로 넘깁니다. 기준 브랜치는 `--base` 또는 자동 탐지.
+- **프록시 친화.** 수업용 프록시처럼 OpenAI 호환 형식으로 여러 회사 모델을 내주는 서버를 위해 `AI_API_URL`, `AI_API_MODEL`, `AI_SMALL_FAST_MODEL` 환경변수를 지원하고, 내장 `temperature` 거부 목록은 제공자와 무관하게 모델 ID 로 적용합니다.
 - **git 출력 형식 고정.** `core.quotepath=false`, `--no-color`, `--no-ext-diff`, `--no-textconv`, `status -z` 를 써서 사용자 설정이나 한글·공백 파일명이 파싱과 safe-mode 제외 규칙을 깨지 않게 합니다.
 - **키 유출 방지.** `AI_API_BASE_URL` 은 https 만 허용(로컬 테스트 서버만 http)하고, HTTP 리디렉션을 따르지 않아 키 헤더가 다른 호스트로 가지 않습니다.
