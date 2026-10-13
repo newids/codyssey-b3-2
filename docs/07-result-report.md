@@ -7,7 +7,7 @@
 | 과제 결과물 | 상태 | 위치 |
 | --- | --- | --- |
 | 1. AI API 연동 및 자동화 흐름 동작 | 완료. `commit`/`pr` 단일 실행으로 수집 → safe-mode → 프롬프트 → API → 검증 → 출력 | `ai_gitgen/commands.py` |
-| 2. GitHub 리포지토리 | 소스·테스트·문서 준비 완료. 커밋과 GitHub 저장소 생성·push 는 제출 직전에 수행 | — |
+| 2. GitHub 리포지토리 | 완료. 공개 저장소, 커밋 5개(과제 원문 → 문서 → 구현 → 테스트 → README) | <https://github.com/newids/codyssey-b3-2> |
 | 3. 사용 가이드 README | 완료. 설치, 환경변수, 사용 예시, 출력 예시, 민감정보 대응, 비용/요청 제한 | `README.md` |
 
 ## 2. 기능 요구사항 대응
