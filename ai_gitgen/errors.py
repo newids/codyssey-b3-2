@@ -1,0 +1,39 @@
+"""사용자에게 보여 줄 메시지를 가진 예외들."""
+
+
+class AiGitgenError(Exception):
+    """도구가 처리하는 모든 오류의 기반. 메시지는 그대로 터미널에 출력된다."""
+
+
+class MissingApiKeyError(AiGitgenError):
+    """API 키 환경변수가 없다."""
+
+
+class AIRequestError(AiGitgenError):
+    """AI API 호출 실패. HTTP 상태와 원인을 메시지에 담는다."""
+
+
+class UnsupportedParameterError(AIRequestError):
+    """모델이 특정 파라미터(예: temperature)를 거부했다."""
+
+    def __init__(self, model: str, parameter: str, reason: str) -> None:
+        super().__init__(f"'{model}' 모델은 {parameter} 를 지원하지 않습니다: {reason}")
+        self.model = model
+        self.parameter = parameter
+        self.reason = reason
+
+
+class RegistryError(AiGitgenError):
+    """모델 레지스트리 파일을 읽거나 쓸 수 없다."""
+
+
+class GitCommandError(AiGitgenError):
+    """git 명령 실행 실패."""
+
+
+class NotGitRepositoryError(GitCommandError):
+    """Git 저장소 루트가 아니다."""
+
+
+class OutputParseError(AiGitgenError):
+    """모델 출력에서 제목을 찾을 수 없다."""
