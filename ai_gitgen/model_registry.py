@@ -59,7 +59,10 @@ def _now() -> str:
 
 
 def is_builtin(provider: str, model: str) -> bool:
-    return model in BUILTIN_NO_TEMPERATURE_MODELS.get(provider, frozenset())
+    """내장 거부 목록에 있는가. 모델 ID 는 제공자 간에 겹치지 않으므로, 프록시(OpenAI 호환 형식으로
+    Claude 모델을 호출하는 경우 등)를 고려해 제공자와 무관하게 전체 목록에서 찾는다."""
+    del provider  # 키 생성에만 쓰이고 조회에는 쓰지 않는다
+    return any(model in models for models in BUILTIN_NO_TEMPERATURE_MODELS.values())
 
 
 class ModelRegistry:

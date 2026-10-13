@@ -17,7 +17,7 @@ class CliTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         env = {"AI_GITGEN_HOME": self._tmp.name, "AI_API_KEY": "test-key"}
-        for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AI_PROVIDER"):
+        for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AI_PROVIDER", "AI_API_URL", "AI_API_BASE_URL", "AI_API_MODEL", "AI_SMALL_FAST_MODEL"):
             os.environ.pop(name, None)
         self._patches = [
             mock.patch.dict(os.environ, env),
@@ -71,6 +71,43 @@ class CommitCommandTest(CliTestCase):
         self.run_cli("commit", "--provider", "openai", "--model", "gpt-4.1", "--temperature", "0", "--max-tokens", "99")
         seen = self.client.settings_seen[0]
         self.assertEqual((seen.provider, seen.model, seen.temperature, seen.max_tokens), ("openai", "gpt-4.1", 0.0, 99))
+
+    def test_env_model_url_and_fast_model_are_used(self) -> None:
+        env = {"AI_API_URL": "https://copa.example.kr", "AI_API_MODEL": "claude-sonnet-4", "AI_SMALL_FAST_MODEL": "claude-haiku-4"}
+        with mock.patch.dict(os.environ, env):
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            _, _, err = self.run_cli("commit")
+            default_seen = self.client.settings_seen[0]
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            self.run_cli("commit", "--fast")
+            fast_seen = self.client.settings_seen[0]
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            self.run_cli("commit", "--model", "gpt-4.1")
+            explicit_seen = self.client.settings_seen[0]
+        self.assertEqual((default_seen.provider, default_seen.model), ("openai", "claude-sonnet-4"))  # URL 이 있으면 OpenAI 호환 형식
+        self.assertEqual(fast_seen.model, "claude-haiku-4")
+        self.assertEqual(explicit_seen.model, "gpt-4.1")
+        self.assertIn("url=https://copa.example.kr", err)
+
+    def test_fast_without_env_uses_provider_default_small_model(self) -> None:
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        self.run_cli("commit", "--fast")
+        self.assertEqual(self.client.settings_seen[0].model, "claude-haiku-4-5")
+        code, _, err = self.run_cli("commit", "--fast", "--model", "x")
+        self.assertEqual(code, 1)
+        self.assertIn("함께 쓸 수 없습니다", err)
+
+    def test_explicit_provider_env_overrides_proxy_default(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_API_URL": "https://copa.example.kr", "AI_PROVIDER": "claude"}):
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            self.run_cli("commit")
+        self.assertEqual(self.client.settings_seen[0].provider, "claude")
+
+    def test_builtin_rejection_applies_across_providers(self) -> None:
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        _, _, err = self.run_cli("commit", "--provider", "openai", "--model", "claude-opus-5-5")
+        self.assertIn("출처: 내장 목록", err)
+        self.assertIsNone(self.client.settings_seen[0].temperature)
 
     def test_no_changes_exits_zero_without_api_call(self) -> None:
         with mock.patch("ai_gitgen.commands.collect_changes", return_value=GitChanges("main", (), "")):
@@ -159,6 +196,21 @@ class TemperatureRegistryTest(CliTestCase):
 
 
 class PullRequestCommandTest(CliTestCase):
+    def test_pr_collects_branch_changes_with_base_option(self) -> None:
+        FakeClient.queue = [result(GOOD_PR)]
+        with mock.patch("ai_gitgen.commands.collect_changes", return_value=sample_changes()) as collect:
+            self.run_cli("pr", "--base", "develop")
+        collect.assert_called_once_with(include_branch=True, base="develop")
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        with mock.patch("ai_gitgen.commands.collect_changes", return_value=sample_changes()) as collect:
+            self.run_cli("commit")
+        collect.assert_called_once_with()
+
+    def test_pr_without_detectable_base_warns(self) -> None:
+        FakeClient.queue = [result(GOOD_PR)]
+        _, _, err = self.run_cli("pr")
+        self.assertIn("[WARN] 기준 브랜치를 찾지 못해", err)
+
     def test_pr_prints_title_and_body(self) -> None:
         FakeClient.queue = [result(GOOD_PR)]
         code, out, err = self.run_cli("pr", "--context", "문구 통일")

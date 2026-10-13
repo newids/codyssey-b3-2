@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class ChangedFile:
     path: str
-    status: str  # porcelain 의 XY 두 글자
+    status: str  # porcelain 의 XY 두 글자, 커밋된 변경은 name-status 의 한 글자 + " "
+    is_committed: bool = False  # 기준 브랜치 이후 커밋에 포함된 변경
 
     @property
     def is_untracked(self) -> bool:
@@ -20,6 +21,8 @@ class GitChanges:
     branch: str
     files: tuple[ChangedFile, ...]
     diff_text: str
+    base_branch: str | None = None  # pr 에서 비교한 기준 브랜치
+    commit_subjects: tuple[str, ...] = ()  # 기준 브랜치 이후 커밋 제목(최신순)
 
     @property
     def line_count(self) -> int:

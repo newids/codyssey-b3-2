@@ -20,7 +20,8 @@ class ModelRegistryTest(unittest.TestCase):
         self.assertEqual(registry.rejects_temperature("claude", "claude-opus-5-5"), SOURCE_BUILTIN)
         self.assertEqual(registry.rejects_temperature("openai", "gpt-5-mini"), SOURCE_BUILTIN)
         self.assertIsNone(registry.rejects_temperature("claude", "claude-sonnet-4-6"))
-        self.assertIsNone(registry.rejects_temperature("openai", "claude-opus-5-5"))  # 제공자가 다르면 무관
+        # 모델 ID 는 제공자 간에 겹치지 않으므로, 프록시를 거쳐 다른 형식으로 불러도 내장 목록이 적용된다
+        self.assertEqual(registry.rejects_temperature("openai", "claude-opus-5-5"), SOURCE_BUILTIN)
         self.assertFalse(self.path.exists())  # 조회만으로는 파일을 만들지 않는다
 
     def test_record_rejection_persists_and_counts(self) -> None:

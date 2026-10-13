@@ -110,7 +110,23 @@ def pr_system_prompt() -> str:
 def format_file_list(changes: GitChanges) -> str:
     if not changes.files:
         return "(없음)"
-    return "\n".join(f"{f.status} {f.path}" + ("  (새 파일)" if f.is_untracked else "") for f in changes.files)
+    return "\n".join(f"{f.status} {f.path}" + _file_note(f) for f in changes.files)
+
+
+def _file_note(changed) -> str:
+    if changed.is_untracked:
+        return "  (새 파일)"
+    return "  (커밋됨)" if changed.is_committed else ""
+
+
+def _branch_lines(changes: GitChanges) -> str:
+    if not changes.base_branch:
+        return ""
+    lines = [f"비교 기준: {changes.base_branch}...{changes.branch} (커밋 {len(changes.commit_subjects)}개 + 미커밋 변경)"]
+    if changes.commit_subjects:
+        lines.append("커밋 제목(최신순):")
+        lines.extend(f"  - {subject}" for subject in changes.commit_subjects)
+    return "\n".join(lines) + "\n"
 
 
 def _protect(text: str, safe_mode: bool) -> str:
@@ -131,7 +147,7 @@ def _build_user(changes: GitChanges, sanitized: SanitizedDiff, context: str | No
     return USER_TEMPLATE.format(
         branch=_protect(changes.branch, sanitized.safe_mode),
         file_count=len(changes.files),
-        context_line=context_line,
+        context_line=_protect(_branch_lines(changes), sanitized.safe_mode) + context_line,
         safe_mode_line=safe_mode_line,
         file_list=_protect(format_file_list(changes), sanitized.safe_mode),
         diff_text=sanitized.text.rstrip("\n") or "(diff 없음)",

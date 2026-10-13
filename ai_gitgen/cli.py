@@ -20,7 +20,16 @@ def _add_generation_options(parser: argparse.ArgumentParser, kind: str) -> None:
         default=config.default_provider(),
         help=f"AI API 제공자 (기본: {config.default_provider()}, 환경변수 {config.PROVIDER_ENV})",
     )
-    parser.add_argument("--model", default=None, help=f"모델 ID (기본: claude {config.DEFAULT_MODELS['claude']}, openai {config.DEFAULT_MODELS['openai']})")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=f"모델 ID (기본: 환경변수 {config.MODEL_ENV}, 없으면 claude {config.DEFAULT_MODELS['claude']} / openai {config.DEFAULT_MODELS['openai']})",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help=f"작고 빠른 모델 사용 (환경변수 {config.FAST_MODEL_ENV}, 없으면 claude {config.FAST_MODELS['claude']} / openai {config.FAST_MODELS['openai']})",
+    )
     parser.add_argument("--temperature", type=float, default=config.DEFAULT_TEMPERATURE, help=f"0.0~1.0 (기본: {config.DEFAULT_TEMPERATURE})")
     parser.add_argument("--max-tokens", type=int, default=None, help=f"출력 토큰 상한 (기본: {config.DEFAULT_MAX_TOKENS[kind]})")
     parser.add_argument("--safe-mode", action="store_true", help="민감정보 마스킹과 전송량 제한 적용")
@@ -38,8 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     commit = sub.add_parser("commit", help="커밋 메시지 생성")
     _add_generation_options(commit, "commit")
-    pr = sub.add_parser("pr", help="PR 제목/본문 초안 생성")
+    pr = sub.add_parser("pr", help="PR 제목/본문 초안 생성 (기준 브랜치 이후 커밋 + 미커밋 변경)")
     _add_generation_options(pr, "pr")
+    pr.add_argument("--base", default=None, help="비교 기준 브랜치 (기본: origin/HEAD → main → master 자동 탐지)")
 
     models = sub.add_parser("models", help="temperature 미지원 모델 목록 관리")
     models_sub = models.add_subparsers(dest="models_command", required=True)
@@ -61,6 +71,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise AiGitgenError(f"--temperature 는 0.0~1.0 사이여야 합니다 (입력: {args.temperature})")
         if args.max_tokens is not None and args.max_tokens <= 0:
             raise AiGitgenError(f"--max-tokens 는 1 이상이어야 합니다 (입력: {args.max_tokens})")
+        if args.model and args.fast:
+            raise AiGitgenError("--model 과 --fast 는 함께 쓸 수 없습니다. 하나만 지정하세요.")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

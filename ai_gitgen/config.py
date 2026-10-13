@@ -24,7 +24,12 @@ API_KEY_ENV = "AI_API_KEY"
 PROVIDER_KEY_ENVS = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
 PROVIDER_ENV = "AI_PROVIDER"
 HOME_ENV = "AI_GITGEN_HOME"
-BASE_URL_ENV = "AI_API_BASE_URL"  # 프록시·테스트 서버로 엔드포인트를 바꿀 때
+URL_ENV = "AI_API_URL"  # 프록시·테스트 서버 주소. 설정되면 그 아래 /v1/... 경로를 쓴다
+LEGACY_URL_ENV = "AI_API_BASE_URL"  # 이전 이름. AI_API_URL 이 없을 때만 읽는다
+MODEL_ENV = "AI_API_MODEL"  # 기본 모델 덮어쓰기
+FAST_MODEL_ENV = "AI_SMALL_FAST_MODEL"  # --fast 옵션이 쓰는 작고 빠른 모델
+FAST_MODELS = {"claude": "claude-haiku-4-5", "openai": "gpt-4.1-nano"}  # FAST_MODEL_ENV 가 없을 때
+PROXY_DEFAULT_PROVIDER = "openai"  # 프록시는 대개 OpenAI 호환 형식을 받는다
 
 # diff 전송량 정책
 GLOBAL_MAX_DIFF_LINES = 2000
@@ -73,21 +78,38 @@ def load_api_key(provider: str) -> str:
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
+def api_base_url() -> str:
+    """AI_API_URL (없으면 AI_API_BASE_URL) 값. 끝의 / 는 제거. 설정이 없으면 빈 문자열."""
+    return (os.environ.get(URL_ENV) or os.environ.get(LEGACY_URL_ENV) or "").strip().rstrip("/")
+
+
 def endpoint(default_url: str, path: str) -> str:
-    """AI_API_BASE_URL 이 있으면 그 주소 아래의 path 를, 없으면 기본 URL 을 쓴다.
+    """AI_API_URL 이 있으면 그 주소 아래의 path 를, 없으면 공식 URL 을 쓴다.
 
     API 키가 평문으로 나가지 않도록 https 만 허용한다. 로컬 테스트 서버만 http 를 허용한다.
     """
-    base = os.environ.get(BASE_URL_ENV, "").strip().rstrip("/")
+    base = api_base_url()
     if not base:
         return default_url
     parsed = urllib.parse.urlparse(base)
     is_local = (parsed.hostname or "") in LOCAL_HOSTS
     if parsed.scheme != "https" and not (parsed.scheme == "http" and is_local):
-        raise AiGitgenError(f"{BASE_URL_ENV} 는 https:// 주소여야 합니다 (로컬 테스트 서버만 http 허용): {base}")
+        raise AiGitgenError(f"{URL_ENV} 는 https:// 주소여야 합니다 (로컬 테스트 서버만 http 허용): {base}")
     return f"{base}{path}"
 
 
 def default_provider() -> str:
-    value = os.environ.get(PROVIDER_ENV, DEFAULT_PROVIDER).strip().lower()
-    return value if value in PROVIDER_NAMES else DEFAULT_PROVIDER
+    """AI_PROVIDER 가 있으면 그 값. 없고 AI_API_URL 이 있으면 OpenAI 호환 형식, 둘 다 없으면 claude."""
+    value = os.environ.get(PROVIDER_ENV, "").strip().lower()
+    if value in PROVIDER_NAMES:
+        return value
+    return PROXY_DEFAULT_PROVIDER if api_base_url() else DEFAULT_PROVIDER
+
+
+def resolve_model(provider: str, explicit: str | None, fast: bool) -> str:
+    """모델 결정 순서: --model > --fast(AI_SMALL_FAST_MODEL 또는 제공자별 기본) > AI_API_MODEL > 제공자 기본."""
+    if explicit:
+        return explicit
+    if fast:
+        return os.environ.get(FAST_MODEL_ENV, "").strip() or FAST_MODELS[provider]
+    return os.environ.get(MODEL_ENV, "").strip() or DEFAULT_MODELS[provider]

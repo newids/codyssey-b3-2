@@ -51,6 +51,22 @@ class UserPromptTest(unittest.TestCase):
         self.assertIn("브랜치: fix/[MASKED:EMAIL]", prompt.user)
         self.assertNotIn("ghp_", prompt.user)
 
+    def test_branch_comparison_and_commit_subjects_are_listed(self) -> None:
+        from ai_gitgen.records import ChangedFile, GitChanges
+
+        changes = GitChanges(
+            branch="feature/x",
+            files=(ChangedFile("a.py", "M ", is_committed=True), ChangedFile("b.py", " M")),
+            diff_text="x",
+            base_branch="main",
+            commit_subjects=("feat: 두 번째", "feat: 첫 번째"),
+        )
+        prompt = prompts.build_pr_prompt(changes, SanitizedDiff(text="x", safe_mode=False))
+        self.assertIn("비교 기준: main...feature/x (커밋 2개 + 미커밋 변경)", prompt.user)
+        self.assertIn("  - feat: 두 번째\n  - feat: 첫 번째", prompt.user)
+        self.assertIn("M  a.py  (커밋됨)", prompt.user)
+        self.assertIn(" M b.py\n", prompt.user)
+
     def test_no_context_omits_context_line(self) -> None:
         prompt = prompts.build_commit_prompt(sample_changes(), SanitizedDiff(text="x", safe_mode=False), context="  ")
         self.assertNotIn("변경 이유", prompt.user)

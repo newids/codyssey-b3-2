@@ -21,6 +21,10 @@ EXIT_ERROR = 1
 def _log_collection(changes: GitChanges, sanitized: SanitizedDiff, kind: str) -> None:
     if kind == "pr":
         formatter.info(f"현재 브랜치: {changes.branch}")
+        if changes.base_branch:
+            formatter.info(f"기준 브랜치 {changes.base_branch} 이후 커밋 {len(changes.commit_subjects)}개 포함")
+        else:
+            formatter.warn("기준 브랜치를 찾지 못해 미커밋 변경만 사용합니다. --base 로 지정할 수 있습니다.")
     formatter.info(f"Git status 수집 완료: {len(changes.files)}개 파일 변경 감지")
     formatter.info(f"Git diff 수집 완료: {changes.line_count}줄")
     if sanitized.safe_mode:
@@ -30,7 +34,7 @@ def _log_collection(changes: GitChanges, sanitized: SanitizedDiff, kind: str) ->
 
 
 def _resolve_settings(args: argparse.Namespace, registry: ModelRegistry, kind: str) -> GenerationSettings:
-    model = args.model or config.DEFAULT_MODELS[args.provider]
+    model = config.resolve_model(args.provider, args.model, args.fast)
     max_tokens = args.max_tokens or config.DEFAULT_MAX_TOKENS[kind]
     temperature: float | None = args.temperature
     source = registry.rejects_temperature(args.provider, model)
@@ -42,7 +46,9 @@ def _resolve_settings(args: argparse.Namespace, registry: ModelRegistry, kind: s
 
 def _describe(settings: GenerationSettings) -> str:
     temp = "없음" if settings.temperature is None else str(settings.temperature)
-    return f"model={settings.model}, temperature={temp}, max_tokens={settings.max_tokens}"
+    base = config.api_base_url()
+    via = f", url={base}" if base else ""
+    return f"provider={settings.provider}, model={settings.model}, temperature={temp}, max_tokens={settings.max_tokens}{via}"
 
 
 def _generate_with_fallback(
@@ -78,7 +84,10 @@ def _log_usage(client: AIClient, results: list[GenerationResult]) -> None:
 
 
 def run_generate(args: argparse.Namespace, kind: str, registry: ModelRegistry) -> int:
-    changes = collect_changes()
+    if kind == "pr":
+        changes = collect_changes(include_branch=True, base=getattr(args, "base", None))
+    else:
+        changes = collect_changes()
     if changes.is_empty:
         target = "커밋 메시지를" if kind == "commit" else "PR 초안을"
         formatter.info(f"변경 사항이 없습니다. {target} 생성하지 않고 종료합니다.")

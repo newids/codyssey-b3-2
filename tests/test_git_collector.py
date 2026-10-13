@@ -92,6 +92,64 @@ class CollectChangesTest(unittest.TestCase):
         self.assertIn("+B = 2", changes.diff_text)
 
 
+class BranchChangesTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name).resolve()
+        init_repo(self.repo)
+        git(self.repo, "checkout", "-q", "-b", "feature/x")
+        (self.repo / "feature.py").write_text("F = 1\n", encoding="utf-8")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-q", "-m", "feat: feature 모듈 추가")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_pr_collection_includes_committed_changes_against_main(self) -> None:
+        (self.repo / "app.py").write_text("changed\n", encoding="utf-8")  # 미커밋 변경도 함께
+
+        changes = collect_changes(self.repo, include_branch=True)
+
+        self.assertEqual(changes.base_branch, "main")
+        self.assertEqual(changes.commit_subjects, ("feat: feature 모듈 추가",))
+        self.assertIn("+F = 1", changes.diff_text)
+        self.assertIn("+changed", changes.diff_text)
+        by_path = {f.path: f for f in changes.files}
+        self.assertTrue(by_path["feature.py"].is_committed)
+        self.assertFalse(by_path["app.py"].is_committed)
+        self.assertFalse(changes.is_empty)
+
+    def test_commit_collection_ignores_committed_changes(self) -> None:
+        changes = collect_changes(self.repo)
+        self.assertTrue(changes.is_empty)
+        self.assertIsNone(changes.base_branch)
+
+    def test_on_base_branch_itself_no_branch_diff(self) -> None:
+        git(self.repo, "checkout", "-q", "main")
+        changes = collect_changes(self.repo, include_branch=True)
+        self.assertTrue(changes.is_empty)
+
+    def test_explicit_missing_base_is_reported(self) -> None:
+        with self.assertRaises(GitCommandError) as ctx:
+            collect_changes(self.repo, include_branch=True, base="develop")
+        self.assertIn("기준 브랜치를 찾을 수 없습니다: develop", str(ctx.exception))
+
+    def test_no_detectable_base_falls_back_to_working_tree(self) -> None:
+        git(self.repo, "branch", "-m", "main", "trunk")
+        changes = collect_changes(self.repo, include_branch=True)
+        self.assertIsNone(changes.base_branch)
+        self.assertTrue(changes.is_empty)
+
+
+class ParseNameStatusTest(unittest.TestCase):
+    def test_parses_modified_added_and_renamed(self) -> None:
+        from ai_gitgen.git_collector import parse_name_status
+
+        files = parse_name_status("M\0a.py\0A\0b.py\0R100\0old.py\0new.py\0")
+        self.assertEqual([(f.status, f.path) for f in files], [("M ", "a.py"), ("A ", "b.py"), ("R ", "new.py")])
+        self.assertTrue(all(f.is_committed for f in files))
+
+
 class ParsePorcelainTest(unittest.TestCase):
     def test_parses_status_and_path(self) -> None:
         files = parse_porcelain(" M a.py\0A  b.py\0?? c.md\0")

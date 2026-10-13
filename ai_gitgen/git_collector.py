@@ -94,8 +94,67 @@ def untracked_diff(root: Path, paths: tuple[str, ...]) -> str:
     return "".join(parts)
 
 
-def collect_changes(cwd: str | Path | None = None) -> GitChanges:
-    """status, diff(작업 트리 + 스테이징 + 새 파일), 브랜치를 한 번에 수집한다."""
+def _ref_exists(root: Path, ref: str) -> bool:
+    try:
+        run_git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=root)
+    except GitCommandError:
+        return False
+    return True
+
+
+def detect_base_branch(root: Path, requested: str | None = None) -> str | None:
+    """PR 비교 기준. --base 가 있으면 그것, 없으면 origin/HEAD → main → master 순서로 찾는다."""
+    if requested:
+        if not _ref_exists(root, requested):
+            raise GitCommandError(f"기준 브랜치를 찾을 수 없습니다: {requested}\n       --base 값을 확인하세요.")
+        return requested
+    try:
+        origin_head = run_git("symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD", cwd=root).strip()
+    except GitCommandError:
+        origin_head = ""
+    for candidate in (origin_head, "main", "master"):
+        if candidate and _ref_exists(root, candidate):
+            return candidate
+    return None
+
+
+def parse_name_status(text: str) -> tuple[ChangedFile, ...]:
+    """`git diff --name-status -z` 출력. 이름 변경/복사는 `R100\\0old\\0new\\0` 형태."""
+    tokens = text.split("\0")
+    files: list[ChangedFile] = []
+    index = 0
+    while index < len(tokens):
+        status = tokens[index]
+        index += 1
+        if not status:
+            continue
+        path = tokens[index] if index < len(tokens) else ""
+        index += 1
+        if status[0] in RENAME_OR_COPY and index < len(tokens):
+            path = tokens[index]
+            index += 1
+        files.append(ChangedFile(path=path, status=f"{status[0]} ", is_committed=True))
+    return tuple(files)
+
+
+def branch_changes(root: Path, base: str) -> tuple[tuple[ChangedFile, ...], str, tuple[str, ...]]:
+    """기준 브랜치 이후 커밋들의 파일 목록, diff, 커밋 제목."""
+    range_spec = f"{base}...HEAD"
+    files = parse_name_status(run_git("diff", "--name-status", "-z", range_spec, cwd=root))
+    diff_text = run_git("diff", *DIFF_OPTIONS, range_spec, cwd=root)
+    subjects = tuple(
+        line for line in run_git("log", "--format=%s", f"{base}..HEAD", cwd=root).splitlines() if line.strip()
+    )
+    return files, diff_text, subjects
+
+
+def collect_changes(
+    cwd: str | Path | None = None, *, include_branch: bool = False, base: str | None = None
+) -> GitChanges:
+    """status, diff(작업 트리 + 스테이징 + 새 파일), 브랜치를 한 번에 수집한다.
+
+    include_branch 가 참이면(pr 명령) 기준 브랜치 이후 커밋된 변경도 함께 모은다.
+    """
     root = ensure_repository_root(cwd)
     files = parse_porcelain(run_git("status", "--porcelain", "-z", "--untracked-files=all", cwd=root))
     untracked = tuple(f.path for f in files if f.is_untracked)
@@ -104,4 +163,17 @@ def collect_changes(cwd: str | Path | None = None) -> GitChanges:
         + run_git("diff", *DIFF_OPTIONS, "--cached", cwd=root)
         + untracked_diff(root, untracked)
     )
-    return GitChanges(branch=current_branch(root), files=files, diff_text=diff_text)
+    branch = current_branch(root)
+    base_branch = detect_base_branch(root, base) if include_branch else None
+    if base_branch and base_branch != branch:
+        committed_files, committed_diff, subjects = branch_changes(root, base_branch)
+        seen = {f.path for f in files}
+        files = tuple(f for f in committed_files if f.path not in seen) + files
+        return GitChanges(
+            branch=branch,
+            files=files,
+            diff_text=committed_diff + diff_text,
+            base_branch=base_branch,
+            commit_subjects=subjects,
+        )
+    return GitChanges(branch=branch, files=files, diff_text=diff_text)

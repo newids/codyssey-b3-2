@@ -47,6 +47,11 @@ class ClaudeProviderTest(unittest.TestCase):
         self.assertEqual(request.url, "http://127.0.0.1:9999/v1/messages")
         self.assertEqual(openai_request.url, "http://127.0.0.1:9999/v1/chat/completions")
 
+    def test_ai_api_url_takes_precedence_over_legacy_name(self) -> None:
+        env = {"AI_API_URL": "https://proxy.example.com", "AI_API_BASE_URL": "https://other.example.com"}
+        with mock.patch.dict("os.environ", env):
+            self.assertEqual(self.provider.prepare("S", "U", settings(), "k").url, "https://proxy.example.com/v1/messages")
+
     def test_plain_http_base_url_to_remote_host_is_rejected(self) -> None:
         from ai_gitgen.errors import AiGitgenError
 
