@@ -12,7 +12,7 @@ Codyssey 미션 B3-2 "내가 고친 코드 설명을 AI가 대신 써주는 도�
 | [docs/10-bonus-3-report.md](docs/10-bonus-3-report.md) | 보너스 3: safe-mode 정책(숫자 기준), 정규식 규칙 확장, ON/OFF 비교, 보안 리뷰 반영 |
 | [docs/11-temperature-experiment.md](docs/11-temperature-experiment.md) | temperature 0.0 / 0.5 / 1.0 × 3회 실험 원문과 해석 |
 | [docs/12-pre-evaluation-feedback.md](docs/12-pre-evaluation-feedback.md) | AI 사전평가(16항목, 10 통과) 지적 사항과 반영 내역, 재검증 방법 |
-| [docs/13-b2-1-convention-check.md](docs/13-b2-1-convention-check.md) | B2-1 루트의 `.ai-gitgen.json` 자동 적용 재현 절차(`scripts/b2-1-convention-check.sh`)와 적용/미적용 비교 |
+| [docs/13-b2-1-convention-check.md](docs/13-b2-1-convention-check.md) | B2-1 루트의 `.ai-gitgen.json` 자동 적용 재현 절차(`scripts/b2-1-convention-check.sh`)와 `commit`·`pr` 적용/미적용 비교 |
 | [docs/01-mission-guide.md](docs/01-mission-guide.md) | 요구사항 분석, 설계, 구현 순서, 보너스 진행법, 점검표 |
 | [docs/02-learning-materials.md](docs/02-learning-materials.md) | HTTP/REST, Messages API, 파라미터, git·subprocess, 프롬프트, 검증, 보안·비용 학습 자료 |
 | [docs/03-evaluation-answers.md](docs/03-evaluation-answers.md) | 과제 목표 5문항 답변과 예상 추가 질문 |
@@ -492,7 +492,7 @@ ai_gitgen/
   errors.py          예외 클래스
 tests/               204개 단위·통합 테스트 (API 키 불필요)
 docs/                가이드, 학습 자료, 평가 답변, 프롬프트, 결과 보고서, 보너스 보고서, conventions/ 예시
-scripts/             b2-1-convention-check.sh: B2-1 에서 컨벤션 자동 적용을 재현하는 스크립트 (docs/13)
+scripts/             b2-1-convention-check.sh: B2-1 에서 commit·pr 컨벤션 자동 적용을 재현하는 스크립트 (docs/13)
 ```
 
 ### 수집 → 호출 → 후처리의 경계와 테스트 지점

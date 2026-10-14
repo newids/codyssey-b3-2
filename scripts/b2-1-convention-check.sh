@@ -12,6 +12,7 @@
 #   3. PR #1 의 변경(4e293a6..f0b1357)을 스테이징 상태로 올린다.
 #      -> "컨벤션 파일은 추적 중이고 diff 에는 없음 + PR 변경 6개 파일 143줄 스테이징" 상태가 된다.
 #   4. commit --dry-run 으로 [팀 컨벤션] 블록을 확인하고, 실제 호출로 컨벤션 적용/미적용 출력을 비교한다.
+#   5. PR 변경을 기능 브랜치에 커밋하고 pr --base 로 적용/미적용 출력을 비교한다 (실제 호출은 모두 4회).
 set -euo pipefail
 
 SOURCE="${1:-git@github.com:newids/codyssey-b2-1.git}"
@@ -65,7 +66,29 @@ echo "== 4-c. 실제 호출: --no-convention (비교용, 기본 컨벤션)"
 python3 -m ai_gitgen commit --safe-mode --no-convention | tee "$OUT/without-convention.out"
 
 echo
-echo "== 5. 제목 비교 (결과 블록의 첫 줄)"
+echo "== 5. 커밋 제목 비교 (결과 블록의 첫 줄)"
 printf '적용   : %s\n' "$(grep -A1 -- '--- Commit Message ---' "$OUT/with-convention.out" | tail -1)"
 printf '미적용 : %s\n' "$(grep -A1 -- '--- Commit Message ---' "$OUT/without-convention.out" | tail -1)"
+
+# pr 은 기준 브랜치 이후 커밋을 본다. "기준 브랜치에는 컨벤션 파일이 있고, 기능 브랜치에 PR 커밋 하나"인 상태를 만든다.
+CONTEXT="search 가 날짜·카테고리·키워드·태그로만 걸러져서 '5만원 이상 지출만 보기' 같은 금액 기준 조회가 불가능했음"
+echo
+echo "== 6. PR 준비: 기준 브랜치 base-check (컨벤션 파일 포함), 기능 브랜치 feature-check (PR #1 커밋)"
+git branch base-check
+git checkout -q -b feature-check
+git log -1 --format=%B "$PR_HEAD" | git -c user.name=check -c user.email=check@example.com commit -q -F -
+git log --oneline base-check..feature-check
+
+echo
+echo "== 6-a. 실제 호출: pr 컨벤션 적용"
+python3 -m ai_gitgen pr --safe-mode --base base-check --context "$CONTEXT" | tee "$OUT/pr-with-convention.out"
+
+echo
+echo "== 6-b. 실제 호출: pr --no-convention (비교용)"
+python3 -m ai_gitgen pr --safe-mode --base base-check --context "$CONTEXT" --no-convention | tee "$OUT/pr-without-convention.out"
+
+echo
+echo "== 7. PR 제목 비교"
+printf '적용   : %s\n' "$(grep -A1 -- '--- PR Title ---' "$OUT/pr-with-convention.out" | tail -1)"
+printf '미적용 : %s\n' "$(grep -A1 -- '--- PR Title ---' "$OUT/pr-without-convention.out" | tail -1)"
 echo "결과 파일: $OUT/"
