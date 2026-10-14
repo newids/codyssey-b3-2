@@ -4,7 +4,7 @@ import re
 
 from ai_gitgen.convention import MaskRule, SafeModePolicy, compile_mask_rule
 from ai_gitgen.errors import MaskTimeoutError
-from ai_gitgen.sanitizer import active_rules, is_excluded, mask_secrets, sanitize, split_diff, truncate_lines
+from ai_gitgen.sanitizer import active_rules, find_sensitive, is_excluded, mask_secrets, sanitize, split_diff, truncate_lines
 
 
 def _file_diff(path: str, lines: int = 3) -> str:
@@ -189,3 +189,30 @@ class CustomPolicyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FindSensitiveTest(unittest.TestCase):
+    def test_counts_per_rule_and_excluded_paths_without_changing_text(self) -> None:
+        diff = "+EMAIL=a@example.com\n+OTHER=b@example.com\n+TOKEN=ghp_" + "x" * 36 + "\n"
+        findings = find_sensitive(diff, ("app.py", ".env", "certs/server.pem"))
+        self.assertEqual(findings.rule_counts, (("GITHUB_TOKEN", 1), ("EMAIL", 2)))
+        self.assertEqual(findings.excluded_paths, (".env", "certs/server.pem"))
+        self.assertEqual(findings.match_total, 3)
+        self.assertFalse(findings.is_empty)
+
+    def test_overlapping_rules_count_a_value_once(self) -> None:
+        findings = find_sensitive("+api_key = sk-" + "a" * 24 + "\n", ("app.py",))
+        self.assertEqual(findings.rule_counts, (("OPENAI_KEY", 1),))
+
+    def test_clean_diff_is_empty(self) -> None:
+        findings = find_sensitive("+print('hello')\n", ("app.py",))
+        self.assertTrue(findings.is_empty)
+        self.assertEqual(findings.match_total, 0)
+
+    def test_policy_rules_and_patterns_are_applied(self) -> None:
+        policy = SafeModePolicy(
+            mask_rules=(compile_mask_rule("EMP_ID", r"EMP-\d{6}"),), exclude=("*.csv",), disabled_rules=("EMAIL",)
+        )
+        findings = find_sensitive("+EMP-123456 a@example.com\n", ("data.csv",), policy)
+        self.assertEqual(findings.rule_counts, (("EMP_ID", 1),))
+        self.assertEqual(findings.excluded_paths, ("data.csv",))

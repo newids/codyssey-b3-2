@@ -121,17 +121,52 @@ def _time_limit(seconds: float, rule_name: str) -> Iterator[None]:
         signal.signal(signal.SIGALRM, previous)
 
 
+def _apply_rule(text: str, name: str, pattern: re.Pattern[str], timeout: float) -> tuple[str, int]:
+    """규칙 하나를 적용한 (새 텍스트, 치환 건수). 사용자 정의 규칙만 제한 시간을 건다."""
+    if name in config.BUILTIN_MASK_RULE_NAMES:
+        return pattern.subn(lambda m: _replacement(m, name), text)
+    with _time_limit(timeout, name):
+        return pattern.subn(lambda m: _replacement(m, name), text)
+
+
 def mask_secrets(text: str, rules: MaskRules = MASK_RULES, timeout: float = MASK_RULE_TIMEOUT_SECONDS) -> tuple[str, int]:
     """알려진 비밀값 형태를 치환하고 치환 건수를 돌려준다. 사용자 정의 규칙은 제한 시간 안에서만 실행한다."""
     total = 0
     for name, pattern in rules:
-        if name in config.BUILTIN_MASK_RULE_NAMES:
-            text, count = pattern.subn(lambda m, n=name: _replacement(m, n), text)
-        else:
-            with _time_limit(timeout, name):
-                text, count = pattern.subn(lambda m, n=name: _replacement(m, n), text)
+        text, count = _apply_rule(text, name, pattern, timeout)
         total += count
     return text, total
+
+
+@dataclass(frozen=True)
+class SensitiveFindings:
+    """safe-mode 를 켜지 않았을 때 diff 에서 발견한 민감정보 후보. 전송 전에 경고하는 용도."""
+
+    rule_counts: tuple[tuple[str, int], ...] = ()  # (규칙 이름, 건수). 건수 0 은 제외
+    excluded_paths: tuple[str, ...] = ()  # safe-mode 라면 이름만 보냈을 파일
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.rule_counts and not self.excluded_paths
+
+    @property
+    def match_total(self) -> int:
+        return sum(count for _, count in self.rule_counts)
+
+
+def find_sensitive(diff_text: str, paths: tuple[str, ...], policy: SafeModePolicy = DEFAULT_POLICY) -> SensitiveFindings:
+    """마스킹 규칙과 제외 패턴을 적용만 해 보고 무엇이 걸리는지 센다. 텍스트는 바꾸지 않는다.
+
+    규칙은 mask_secrets 와 같은 순서로 누적 적용해, 한 값이 두 규칙에 겹쳐 두 번 세어지지 않게 한다.
+    """
+    counts: list[tuple[str, int]] = []
+    text = diff_text
+    for name, pattern in active_rules(policy):
+        text, count = _apply_rule(text, name, pattern, MASK_RULE_TIMEOUT_SECONDS)
+        if count:
+            counts.append((name, count))
+    excluded = tuple(path for path in paths if is_excluded(path, policy.excluded_patterns))
+    return SensitiveFindings(rule_counts=tuple(counts), excluded_paths=excluded)
 
 
 def truncate_lines(text: str, max_lines: int) -> tuple[str, int]:

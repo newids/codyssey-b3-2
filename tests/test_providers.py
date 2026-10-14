@@ -19,8 +19,8 @@ OPENAI_OK = {
 }
 
 
-def settings(provider: str = "claude", temperature: float | None = 0.3) -> GenerationSettings:
-    return GenerationSettings(provider=provider, model="m", temperature=temperature, max_tokens=256)
+def settings(provider: str = "claude", temperature: float | None = 0.3, model: str = "m") -> GenerationSettings:
+    return GenerationSettings(provider=provider, model=model, temperature=temperature, max_tokens=256)
 
 
 class ClaudeProviderTest(unittest.TestCase):
@@ -87,8 +87,17 @@ class OpenAIProviderTest(unittest.TestCase):
         request = self.provider.prepare("SYS", "USER", settings("openai"), "key")
         self.assertEqual(request.headers["authorization"], "Bearer key")
         self.assertEqual(request.body["messages"][0], {"role": "system", "content": "SYS"})
-        self.assertEqual(request.body["max_completion_tokens"], 256)
-        self.assertNotIn("max_tokens", request.body)
+        self.assertEqual(request.body["max_tokens"], 256)  # gpt-4.1-mini 와 호환 프록시가 알아듣는 필드
+        self.assertNotIn("max_completion_tokens", request.body)
+
+    def test_reasoning_models_use_max_completion_tokens(self) -> None:
+        for model in ("gpt-5-mini", "o3", "O4-mini", "gpt-5.5", "openai/gpt-5"):
+            request = self.provider.prepare("SYS", "USER", settings("openai", model=model), "key")
+            self.assertEqual(request.body["max_completion_tokens"], 256, model)
+            self.assertNotIn("max_tokens", request.body, model)
+        for model in ("gpt-4.1-mini", "gpt-4o", "claude-sonnet-4", "o-ring-model"):
+            request = self.provider.prepare("SYS", "USER", settings("openai", model=model), "key")
+            self.assertEqual(request.body["max_tokens"], 256, model)
 
     def test_parse_maps_finish_reason(self) -> None:
         result = self.provider.parse(OPENAI_OK)

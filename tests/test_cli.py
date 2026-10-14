@@ -7,8 +7,8 @@ from unittest import mock
 
 from ai_gitgen import cli
 from ai_gitgen.errors import UnsupportedParameterError
-from ai_gitgen.records import GitChanges
-from tests.helpers import GOOD_COMMIT, GOOD_PR, PR_MISSING_TEST_SECTION, FakeClient, result, sample_changes
+from ai_gitgen.records import ChangedFile, GitChanges
+from tests.helpers import GOOD_COMMIT, GOOD_PR, PR_MISSING_TEST_SECTION, SAMPLE_DIFF, FakeClient, result, sample_changes
 
 
 class CliTestCase(unittest.TestCase):
@@ -94,7 +94,7 @@ class CommitCommandTest(CliTestCase):
         self.run_cli("commit", "--fast")
         self.assertEqual(self.client.settings_seen[0].model, "claude-haiku-4-5")
         code, _, err = self.run_cli("commit", "--fast", "--model", "x")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         self.assertIn("함께 쓸 수 없습니다", err)
 
     def test_explicit_provider_env_overrides_proxy_default(self) -> None:
@@ -109,12 +109,75 @@ class CommitCommandTest(CliTestCase):
         self.assertIn("출처: 내장 목록", err)
         self.assertIsNone(self.client.settings_seen[0].temperature)
 
-    def test_no_changes_exits_zero_without_api_call(self) -> None:
+    def test_no_changes_exits_with_code_three_without_api_call(self) -> None:
         with mock.patch("ai_gitgen.commands.collect_changes", return_value=GitChanges("main", (), "")):
             code, out, err = self.run_cli("commit")
-        self.assertEqual(code, 0)
-        self.assertIn("변경 사항이 없습니다. 커밋 메시지를 생성하지 않고 종료합니다.", err)
+        self.assertEqual(code, 3)
+        self.assertIn("[INFO] 변경 사항이 없습니다. 커밋 메시지를 생성하지 않고 종료합니다 (종료 코드 3).", err)
+        self.assertEqual(out, "")
         self.assertEqual(self.created, [])
+
+    def test_done_line_reminds_review_before_applying(self) -> None:
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        _, _, err = self.run_cli("commit")
+        self.assertIn("[DONE] 커밋 메시지 생성 완료. AI 초안입니다. 내용을 검토·수정한 뒤 적용하세요", err)
+        FakeClient.queue = [result(GOOD_PR)]
+        _, _, err = self.run_cli("pr")
+        self.assertIn("[DONE] PR 초안 생성 완료. AI 초안입니다.", err)
+
+    def test_title_over_soft_limit_is_noted_with_both_limits(self) -> None:
+        FakeClient.queue = [result("feat(search): 금액 범위 필터 옵션 추가 (--min-amount, --max-amount)\n\n- 본문")]
+        _, _, err = self.run_cli("commit")
+        self.assertIn("[INFO] 제목 57자: 권장 50자를 넘었습니다 (최대 72자).", err)
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        _, _, err = self.run_cli("commit")
+        self.assertNotIn("권장 50자", err)
+
+    def test_secrets_without_safe_mode_are_warned_before_sending(self) -> None:
+        diff = SAMPLE_DIFF + "diff --git a/.env b/.env\n+ADMIN=admin@example.com\n+TOKEN=ghp_" + "a" * 36 + "\n"
+        changes = sample_changes(diff)
+        changes = GitChanges(changes.branch, changes.files + (ChangedFile(".env", "A "),), diff)
+        with mock.patch("ai_gitgen.commands.collect_changes", return_value=changes):
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            _, _, err = self.run_cli("commit")
+            self.assertIn(
+                "[WARN] safe-mode 꺼짐: 민감정보로 보이는 값 2개 (GITHUB_TOKEN 1, EMAIL 1) · 비밀 파일로 분류되는 파일 1개 (.env) 이(가) 그대로 전송됩니다.",
+                err,
+            )
+            self.assertIn("--safe-mode 를 켜거나", err)
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            _, _, err = self.run_cli("commit", "--safe-mode")
+        self.assertNotIn("safe-mode 꺼짐", err)
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        _, _, err = self.run_cli("commit")  # 평범한 diff 에는 경고가 없다
+        self.assertNotIn("safe-mode 꺼짐", err)
+
+    def test_unprotected_scan_timeout_is_a_warning_not_a_failure(self) -> None:
+        from ai_gitgen.errors import MaskTimeoutError
+
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        with mock.patch("ai_gitgen.commands.find_sensitive", side_effect=MaskTimeoutError("규칙 X 가 2초 안에 끝나지 않아 중단했습니다.")):
+            code, out, err = self.run_cli("commit")
+        self.assertEqual(code, 0)
+        self.assertIn("[WARN] 민감정보 사전 검사를 건너뜁니다: 규칙 X", err)
+        self.assertIn("--- Commit Message ---", out)
+
+    def test_unprotected_scan_only_covers_text_that_is_sent(self) -> None:
+        body = "".join(f"+line {i}\n" for i in range(2100)) + "+leak=a@example.com\n"  # 전체 2,000줄 상한 뒤에 있는 값
+        with mock.patch("ai_gitgen.commands.collect_changes", return_value=sample_changes(SAMPLE_DIFF + body)):
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            _, _, err = self.run_cli("commit")
+        self.assertNotIn("safe-mode 꺼짐", err)
+        self.assertIn("길이 제한으로 생략", err)
+
+    def test_bad_api_url_fails_before_git_collection(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_API_URL": "http://evil.example.com"}), mock.patch(
+            "ai_gitgen.commands.collect_changes", return_value=sample_changes()
+        ) as collect:
+            code, _, err = self.run_cli("commit", "--dry-run")
+        self.assertEqual(code, 2)
+        self.assertIn("https:// 주소여야 합니다", err)
+        collect.assert_not_called()
 
     def test_dry_run_prints_prompts_without_client(self) -> None:
         code, out, err = self.run_cli("commit", "--dry-run", "--safe-mode")
@@ -124,11 +187,36 @@ class CommitCommandTest(CliTestCase):
         self.assertIn("[INFO] safe-mode:", err)
         self.assertEqual(self.created, [])
 
-    def test_missing_api_key_is_reported(self) -> None:
+    def test_missing_api_key_exits_before_git_collection(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_API_KEY": ""}), mock.patch(
+            "ai_gitgen.commands.collect_changes", return_value=sample_changes()
+        ) as collect:
+            code, out, err = self.run_cli("commit")
+        self.assertEqual(code, 2)
+        self.assertIn("[ERROR] AI_API_KEY 환경변수가 설정되지 않았습니다. API 를 호출하지 않고 종료합니다.", err)
+        self.assertIn('export AI_API_KEY="YOUR_KEY"  (또는 ANTHROPIC_API_KEY)', err)
+        self.assertIn("--dry-run", err)
+        self.assertEqual(out, "")
+        collect.assert_not_called()
+        self.assertEqual(self.created, [])
+
+    def test_api_key_source_is_logged_by_name_only(self) -> None:
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        _, _, err = self.run_cli("commit")
+        self.assertIn("[INFO] API 키 확인: AI_API_KEY 설정됨", err)
+        self.assertNotIn("test-key", err)
+        with mock.patch.dict(os.environ, {"AI_API_KEY": "", "OPENAI_API_KEY": "sk-other"}):
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            _, _, err = self.run_cli("commit", "--provider", "openai")
+        self.assertIn("[INFO] API 키 확인: OPENAI_API_KEY 설정됨", err)
+        self.assertNotIn("sk-other", err)
+
+    def test_dry_run_does_not_need_api_key(self) -> None:
         with mock.patch.dict(os.environ, {"AI_API_KEY": ""}):
-            code, _, err = self.run_cli("commit")
-        self.assertEqual(code, 1)
-        self.assertIn("[ERROR] AI_API_KEY 환경변수가 설정되지 않았습니다.", err)
+            code, out, err = self.run_cli("commit", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn("--- System Prompt ---", out)
+        self.assertNotIn("API 키 확인", err)
 
     def test_long_title_is_polished_with_warning(self) -> None:
         FakeClient.queue = [result("feat: " + "단어 " * 40 + "\n\n- 본문")]
@@ -142,6 +230,15 @@ class CommitCommandTest(CliTestCase):
         FakeClient.queue = [result(GOOD_COMMIT, stop_reason="max_tokens")]
         _, _, err = self.run_cli("commit")
         self.assertIn("max_tokens 에서 잘렸습니다", err)
+
+    def test_truncated_output_is_not_regenerated(self) -> None:
+        FakeClient.queue = [result(PR_MISSING_TEST_SECTION, stop_reason="max_tokens"), result(GOOD_PR)]
+        code, out, err = self.run_cli("pr")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.client.call_count, 1)
+        self.assertIn("[WARN] 출력이 잘려 구조가 깨졌습니다. 재생성하지 않고 후처리만 합니다. --max-tokens 를 늘려", err)
+        self.assertNotIn("1회 재생성합니다", err)
+        self.assertIn("## How to Test\n- (작성 필요)", out)
 
 
 class TemperatureRegistryTest(CliTestCase):
@@ -270,12 +367,12 @@ class PullRequestCommandTest(CliTestCase):
 class ArgumentValidationTest(CliTestCase):
     def test_temperature_out_of_range(self) -> None:
         code, _, err = self.run_cli("commit", "--temperature", "1.5")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         self.assertIn("0.0~1.0", err)
 
     def test_max_tokens_must_be_positive(self) -> None:
         code, _, err = self.run_cli("pr", "--max-tokens", "0")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         self.assertIn("--max-tokens", err)
 
     def test_api_error_is_reported_with_exit_one(self) -> None:
@@ -352,13 +449,13 @@ class ConventionCliTest(CliTestCase):
 
     def test_both_convention_flags_is_an_error(self) -> None:
         code, _, err = self.run_cli("commit", "--convention", "x.json", "--no-convention")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         self.assertIn("함께 쓸 수 없습니다", err)
 
     def test_invalid_file_fails_before_api_call(self) -> None:
         self._write({"commit": {"scope": "maybe"}})
         code, _, err = self.run_cli("commit")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         self.assertIn("[ERROR]", err)
         self.assertIn("commit.scope", err)
         self.assertEqual(self.created, [])
@@ -372,7 +469,7 @@ class ConventionCliTest(CliTestCase):
         self.assertTrue(os.path.exists(os.path.join(self._tmp.name, ".ai-gitgen.json")))
         self.assertIn("[DONE]", err)
         code, _, err = self.run_cli("convention", "init")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)  # 설정·사용법 오류: 기존 파일을 덮어쓰지 않는다
         self.assertIn("이미 있습니다", err)
         code, out, _ = self.run_cli("convention", "show")
         self.assertIn(".ai-gitgen.json", out)
@@ -405,12 +502,12 @@ class SafeModePolicyCliTest(ConventionCliTest):
 
     def test_bad_mask_option_is_rejected_before_api_call(self) -> None:
         code, _, err = self.run_cli("commit", "--safe-mode", "--mask", "bad")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         self.assertIn("--mask", err)
         self.assertEqual(self.created, [])
         for value in ("0", "-1", "201"):
             code, _, err = self.run_cli("commit", "--safe-mode", "--max-files", value)
-            self.assertEqual(code, 1, value)
+            self.assertEqual(code, 2, value)
             self.assertIn("--max-files 는 1~200", err)
         self.assertEqual(self.created, [])
 

@@ -7,10 +7,14 @@ import sys
 from collections.abc import Sequence
 
 from . import __version__, commands, config, convention, formatter
-from .errors import AiGitgenError
+from .errors import AiGitgenError, ConfigurationError, UsageError
 from .model_registry import ModelRegistry
 
-EXIT_INTERRUPTED = 130
+EXIT_CODE_HELP = (
+    "종료 코드: 0 성공 / 1 실행 오류(API 응답·git 실패) / 2 설정·사용법 오류(옵션 값, API 키 없음, 설정 파일) / "
+    "3 변경 사항 없음 / 130 사용자 중단. "
+    "결과 블록은 stdout, [INFO]/[WARN]/[ERROR] 로그는 stderr 로 나가므로 `commit > msg.txt` 처럼 결과만 저장할 수 있습니다."
+)
 
 
 def _add_generation_options(parser: argparse.ArgumentParser, kind: str) -> None:
@@ -23,15 +27,34 @@ def _add_generation_options(parser: argparse.ArgumentParser, kind: str) -> None:
     parser.add_argument(
         "--model",
         default=None,
-        help=f"모델 ID (기본: 환경변수 {config.MODEL_ENV}, 없으면 claude {config.DEFAULT_MODELS['claude']} / openai {config.DEFAULT_MODELS['openai']})",
+        help=(
+            f"모델 ID (기본: 환경변수 {config.MODEL_ENV}, 없으면 claude {config.DEFAULT_MODELS['claude']} / openai {config.DEFAULT_MODELS['openai']}). "
+            "같은 diff 를 다른 모델로 돌려 품질·비용을 비교하거나, 재현을 위해 모델을 고정할 때 지정"
+        ),
     )
     parser.add_argument(
         "--fast",
         action="store_true",
         help=f"작고 빠른 모델 사용 (환경변수 {config.FAST_MODEL_ENV}, 없으면 claude {config.FAST_MODELS['claude']} / openai {config.FAST_MODELS['openai']})",
     )
-    parser.add_argument("--temperature", type=float, default=config.DEFAULT_TEMPERATURE, help=f"0.0~1.0 (기본: {config.DEFAULT_TEMPERATURE})")
-    parser.add_argument("--max-tokens", type=int, default=None, help=f"출력 토큰 상한 (기본: {config.DEFAULT_MAX_TOKENS[kind]})")
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=config.DEFAULT_TEMPERATURE,
+        help=(
+            f"0.0~1.0 (기본: {config.DEFAULT_TEMPERATURE}). 낮을수록 같은 diff 에 거의 같은 결과(재현성), "
+            "높을수록 표기·분량이 흔들림. 실험·비교 목적으로만 올리세요"
+        ),
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help=(
+            f"출력 토큰 상한 (기본: {config.DEFAULT_MAX_TOKENS[kind]}). 목표 길이가 아니라 안전장치이며, "
+            "부족하면 본문이 중간에 잘리고 [WARN] 이 출력됨. 비용은 실제 생성량만큼만 발생"
+        ),
+    )
     parser.add_argument("--safe-mode", action="store_true", help="민감정보 마스킹과 전송량 제한 적용")
     parser.add_argument("--max-files", type=int, default=None, metavar="N", help=f"safe-mode 최대 파일 수 (기본 {config.SAFE_MODE_MAX_FILES}, 설정 파일 safe_mode.max_files)")
     parser.add_argument("--max-lines", type=int, default=None, metavar="N", help=f"safe-mode 파일당 최대 줄 수 (기본 {config.SAFE_MODE_MAX_LINES_PER_FILE})")
@@ -47,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=config.APP_NAME,
         description="git 변경 사항으로 커밋 메시지와 PR 초안을 생성합니다. 결과는 초안이며 검토 후 적용하세요.",
+        epilog=EXIT_CODE_HELP,
     )
     parser.add_argument("--version", action="version", version=f"{config.APP_NAME} {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -80,17 +104,17 @@ def build_parser() -> argparse.ArgumentParser:
 def _validate_args(args: argparse.Namespace) -> None:
     if args.command in ("commit", "pr"):
         if args.temperature is not None and not 0.0 <= args.temperature <= 1.0:
-            raise AiGitgenError(f"--temperature 는 0.0~1.0 사이여야 합니다 (입력: {args.temperature})")
+            raise UsageError(f"--temperature 는 0.0~1.0 사이여야 합니다 (입력: {args.temperature})")
         if args.max_tokens is not None and args.max_tokens <= 0:
-            raise AiGitgenError(f"--max-tokens 는 1 이상이어야 합니다 (입력: {args.max_tokens})")
+            raise UsageError(f"--max-tokens 는 1 이상이어야 합니다 (입력: {args.max_tokens})")
         if args.model and args.fast:
-            raise AiGitgenError("--model 과 --fast 는 함께 쓸 수 없습니다. 하나만 지정하세요.")
+            raise UsageError("--model 과 --fast 는 함께 쓸 수 없습니다. 하나만 지정하세요.")
         if args.convention and args.no_convention:
-            raise AiGitgenError("--convention 과 --no-convention 은 함께 쓸 수 없습니다.")
+            raise UsageError("--convention 과 --no-convention 은 함께 쓸 수 없습니다.")
         for name, key, value in (("--max-files", "max_files", args.max_files), ("--max-lines", "max_lines_per_file", args.max_lines)):
             low, high = convention.LIMIT_RANGES[key]
             if value is not None and not low <= value <= high:
-                raise AiGitgenError(f"{name} 는 {low}~{high} 사이여야 합니다 (입력: {value})")
+                raise UsageError(f"{name} 는 {low}~{high} 사이여야 합니다 (입력: {value})")
         for value in args.mask or ():
             convention.parse_mask_option(value)  # 형식·정규식 오류를 API 호출 전에 알린다
 
@@ -106,12 +130,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "convention":
             return commands.run_convention(args)
         return commands.run_generate(args, args.command, registry)
+    except ConfigurationError as exc:  # 옵션·키·설정 파일: 고치고 다시 실행하면 된다
+        formatter.error(str(exc))
+        return config.EXIT_USAGE
     except AiGitgenError as exc:
         formatter.error(str(exc))
-        return commands.EXIT_ERROR
+        return config.EXIT_ERROR
     except KeyboardInterrupt:
         formatter.error("사용자가 중단했습니다.")
-        return EXIT_INTERRUPTED
+        return config.EXIT_INTERRUPTED
     except Exception as exc:  # noqa: BLE001 - 스택트레이스 대신 원인 한 줄을 보여 준다
         formatter.error(f"예상하지 못한 오류 ({type(exc).__name__}): {exc}")
-        return commands.EXIT_ERROR
+        return config.EXIT_ERROR

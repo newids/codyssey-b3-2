@@ -5,8 +5,16 @@ class AiGitgenError(Exception):
     """도구가 처리하는 모든 오류의 기반. 메시지는 그대로 터미널에 출력된다."""
 
 
-class MissingApiKeyError(AiGitgenError):
-    """API 키 환경변수가 없다."""
+class ConfigurationError(AiGitgenError):
+    """실행 전에 고쳐야 하는 설정·사용법 오류. 종료 코드 2 (argparse 의 사용법 오류와 같은 값)."""
+
+
+class UsageError(ConfigurationError):
+    """옵션 값이 범위를 벗어나거나 함께 쓸 수 없는 옵션을 같이 줬다."""
+
+
+class MissingApiKeyError(ConfigurationError):
+    """API 키 환경변수가 없다. git 수집이나 API 호출 전에 확인한다."""
 
 
 class AIRequestError(AiGitgenError):
@@ -39,7 +47,7 @@ class OutputParseError(AiGitgenError):
     """모델 출력에서 제목을 찾을 수 없다."""
 
 
-class ConventionError(AiGitgenError):
+class ConventionError(ConfigurationError):
     """컨벤션 설정 파일(.ai-gitgen.json)을 읽을 수 없거나 값이 규격에 맞지 않는다."""
 
 

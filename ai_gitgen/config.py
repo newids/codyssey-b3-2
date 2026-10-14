@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import os
 import urllib.parse
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .errors import AiGitgenError, MissingApiKeyError
+from .errors import ConfigurationError, MissingApiKeyError
 
 APP_NAME = "ai-gitgen"
+
+# 종료 코드. 스크립트에서 `ai-gitgen commit > msg || ...` 처럼 분기할 수 있게 상황별로 나눈다
+EXIT_OK = 0
+EXIT_ERROR = 1  # 실행 중 오류: API 응답 오류, git 실패, 예상하지 못한 예외
+EXIT_USAGE = 2  # 실행 전에 고쳐야 하는 것: 옵션 값, API 키 없음, 설정 파일 오류 (argparse 와 같은 값)
+EXIT_NO_CHANGES = 3  # 오류는 아니지만 생성할 것이 없음
+EXIT_INTERRUPTED = 130  # Ctrl+C
 
 # 제공자와 모델
 DEFAULT_PROVIDER = "claude"
@@ -30,6 +38,9 @@ MODEL_ENV = "AI_API_MODEL"  # 기본 모델 덮어쓰기
 FAST_MODEL_ENV = "AI_SMALL_FAST_MODEL"  # --fast 옵션이 쓰는 작고 빠른 모델
 FAST_MODELS = {"claude": "claude-haiku-4-5", "openai": "gpt-4.1-nano"}  # FAST_MODEL_ENV 가 없을 때
 PROXY_DEFAULT_PROVIDER = "openai"  # 프록시는 대개 OpenAI 호환 형식을 받는다
+# OpenAI 추론 모델은 출력 상한을 max_completion_tokens 로만 받고 max_tokens 를 400 으로 거부한다.
+# 그 밖의 모델과 OpenAI 호환 프록시·로컬 서버는 max_tokens 만 알아듣는 경우가 많다 (수업용 프록시가 그렇다).
+OPENAI_COMPLETION_TOKENS_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 # diff 전송량 정책
 GLOBAL_MAX_DIFF_LINES = 2000
@@ -79,16 +90,28 @@ def registry_path() -> Path:
     return Path(home) / "model_registry.json"
 
 
-def load_api_key(provider: str) -> str:
-    """AI_API_KEY 를 우선 읽고, 없으면 제공자별 환경변수를 읽는다."""
+@dataclass(frozen=True)
+class ApiCredential:
+    """API 키와 그 키를 읽은 환경변수 이름. 로그에는 이름만 쓰고 값은 절대 쓰지 않는다."""
+
+    key: str = field(repr=False)  # 디버그 출력·테스트 실패 메시지에도 값이 찍히지 않게
+    env_name: str
+
+
+def resolve_api_key(provider: str) -> ApiCredential:
+    """AI_API_KEY 를 우선 읽고, 없으면 제공자별 환경변수를 읽는다. 둘 다 없으면 MissingApiKeyError."""
     fallback_env = PROVIDER_KEY_ENVS.get(provider, "")
-    key = (os.environ.get(API_KEY_ENV) or (os.environ.get(fallback_env) if fallback_env else "") or "").strip()
-    if key:
-        return key
+    for env_name in (API_KEY_ENV, fallback_env):
+        key = os.environ.get(env_name, "").strip() if env_name else ""
+        if key:
+            return ApiCredential(key=key, env_name=env_name)
     hint = f"예) export {API_KEY_ENV}=\"YOUR_KEY\""
     if fallback_env:
         hint += f"  (또는 {fallback_env})"
-    raise MissingApiKeyError(f"{API_KEY_ENV} 환경변수가 설정되지 않았습니다.\n{hint}")
+    raise MissingApiKeyError(
+        f"{API_KEY_ENV} 환경변수가 설정되지 않았습니다. API 를 호출하지 않고 종료합니다.\n{hint}\n"
+        "       프롬프트만 확인하려면 --dry-run 을 쓰세요 (키 불필요)."
+    )
 
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
@@ -99,19 +122,25 @@ def api_base_url() -> str:
     return (os.environ.get(URL_ENV) or os.environ.get(LEGACY_URL_ENV) or "").strip().rstrip("/")
 
 
-def endpoint(default_url: str, path: str) -> str:
-    """AI_API_URL 이 있으면 그 주소 아래의 path 를, 없으면 공식 URL 을 쓴다.
+def validate_api_base_url() -> str:
+    """AI_API_URL 을 검사해 돌려준다(없으면 빈 문자열). 실행 시작 시 한 번 부른다.
 
     API 키가 평문으로 나가지 않도록 https 만 허용한다. 로컬 테스트 서버만 http 를 허용한다.
     """
     base = api_base_url()
     if not base:
-        return default_url
+        return ""
     parsed = urllib.parse.urlparse(base)
     is_local = (parsed.hostname or "") in LOCAL_HOSTS
     if parsed.scheme != "https" and not (parsed.scheme == "http" and is_local):
-        raise AiGitgenError(f"{URL_ENV} 는 https:// 주소여야 합니다 (로컬 테스트 서버만 http 허용): {base}")
-    return f"{base}{path}"
+        raise ConfigurationError(f"{URL_ENV} 는 https:// 주소여야 합니다 (로컬 테스트 서버만 http 허용): {base}")
+    return base
+
+
+def endpoint(default_url: str, path: str) -> str:
+    """AI_API_URL 이 있으면 그 주소 아래의 path 를, 없으면 공식 URL 을 쓴다."""
+    base = validate_api_base_url()
+    return f"{base}{path}" if base else default_url
 
 
 def default_provider() -> str:

@@ -125,10 +125,18 @@ class OpenAIProvider:
     finish_reason_map = {"stop": "end_turn", "length": "max_tokens", "content_filter": "refusal"}
     quota_codes = {"insufficient_quota", "credit_balance_exhausted"}
 
+    @staticmethod
+    def token_limit_field(model: str) -> str:
+        """모델에 맞는 출력 상한 필드 이름. 추론 모델만 max_completion_tokens, 나머지는 호환성이 넓은 max_tokens."""
+        bare = model.lower().rsplit("/", 1)[-1]  # 프록시가 쓰는 "openai/gpt-5" 형태의 벤더 접두 제거
+        if bare.startswith(config.OPENAI_COMPLETION_TOKENS_PREFIXES):
+            return "max_completion_tokens"
+        return "max_tokens"
+
     def prepare(self, system: str, user: str, settings: GenerationSettings, api_key: str) -> PreparedRequest:
         body: dict[str, object] = {
             "model": settings.model,
-            "max_completion_tokens": settings.max_tokens,
+            self.token_limit_field(settings.model): settings.max_tokens,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         }
         if settings.temperature is not None:
