@@ -24,7 +24,7 @@
 | 환경변수 관례 | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` |
 | 시스템 프롬프트 | 최상위 `system` 필드 | `messages` 배열의 첫 항목 `{"role": "system", ...}` (최신 모델은 `developer` 역할도 가능) |
 | 사용자 메시지 | `messages: [{"role": "user", "content": "..."}]` | 같음 |
-| 출력 상한 | `max_tokens` (필수) | `max_completion_tokens` (선택). `max_tokens` 는 폐기 예정이며 추론 모델에서 오류 |
+| 출력 상한 | `max_tokens` (필수) | 추론 모델(`gpt-5*`, `o1/o3/o4*`)은 `max_completion_tokens` 만 받고 `max_tokens` 는 400. 그 밖의 모델과 **OpenAI 호환 프록시·로컬 서버는 `max_tokens` 만 적용하는 경우가 많음** (수업용 프록시 실측: `max_completion_tokens: 20` 은 무시되어 302 토큰 출력, `max_tokens: 20` 은 정확히 20 토큰에서 `finish_reason: length`). 도구는 모델 이름으로 필드를 고른다 |
 | 샘플링 | `temperature` 0~1 | `temperature` 0~2 (기본 1). `top_p` 와 동시 사용 비권장 |
 | 사고 깊이 | `output_config.effort` | `reasoning_effort` (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`, 모델별 지원 상이) |
 | 생성 텍스트 | `content[]` 중 `type == "text"` 블록의 `text` 를 이어 붙임 | `choices[0].message.content` (문자열) |
@@ -43,7 +43,7 @@ export OPENAI_API_KEY="YOUR_KEY"
 curl -s https://api.openai.com/v1/chat/completions \
   -H "content-type: application/json" \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
-  -d '{"model":"gpt-4.1-mini","max_completion_tokens":256,"temperature":0.3,
+  -d '{"model":"gpt-4.1-mini","max_tokens":256,"temperature":0.3,
        "messages":[{"role":"system","content":"한 줄로 답하십시오."},
                    {"role":"user","content":"인사해 줘"}]}' | python3 -m json.tool
 ```
@@ -69,9 +69,10 @@ def load_openai_key() -> str:
 
 def generate_openai(system: str, user: str, *, model: str, temperature: float | None,
                     max_tokens: int, timeout: float = 60.0) -> GenerationResult:
+    limit_field = "max_completion_tokens" if model.startswith(("gpt-5", "o1", "o3", "o4")) else "max_tokens"
     body: dict[str, object] = {
         "model": model,
-        "max_completion_tokens": max_tokens,
+        limit_field: max_tokens,  # 추론 모델만 새 필드. 프록시·구형 모델은 max_tokens 만 알아듣는다
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
     }
     if temperature is not None:
@@ -169,7 +170,7 @@ OpenAI 오류 본문에는 `param` 과 `code` 가 있어 Claude 보다 분류가
 | HTTP | `error.type` / `error.code` | 뜻 | 도구의 처리 |
 | --- | --- | --- | --- |
 | 400 | `invalid_request_error`, `param: "temperature"`, `code: "unsupported_value"` | 추론 모델에 `temperature` 전송 | `UnsupportedParameterError` → 레지스트리 기록 → `temperature` 없이 1회 재요청 |
-| 400 | `invalid_request_error`, `param: "max_tokens"` | 추론 모델에 폐기된 `max_tokens` 전송 | 코드 버그. `max_completion_tokens` 사용 |
+| 400 | `invalid_request_error`, `param: "max_tokens"` | 추론 모델에 폐기된 `max_tokens` 전송 | 모델 이름이 `gpt-5`/`o1`/`o3`/`o4` 로 시작하면 `max_completion_tokens` 로 보냄 (`config.OPENAI_COMPLETION_TOKENS_PREFIXES`) |
 | 400 | 기타 | 형식 오류, 모델 ID 오류(일부는 404) | 메시지 그대로 출력 |
 | 401 | `invalid_api_key` 등 | 키 오류, 조직 미소속, IP 미허용 | "키 값과 환경변수 이름 확인" |
 | 403 | 지역 미지원 | 접속 지역 문제 | 메시지 그대로 |
@@ -272,7 +273,7 @@ PROVIDERS: dict[str, AIProvider] = {"claude": ClaudeProvider(), "openai": OpenAI
 | 과제 요구 | OpenAI 로 구현 시 확인할 것 |
 | --- | --- |
 | API 키 환경변수 | `AI_API_KEY` 또는 `OPENAI_API_KEY`. README 에 둘 다 적는다 |
-| `--model`, `--temperature`, `--max-tokens` 옵션 | 기본 모델은 `temperature` 를 받는 `gpt-4.1-mini`. `--max-tokens` 는 본문에서 `max_completion_tokens` 로 보낸다 |
+| `--model`, `--temperature`, `--max-tokens` 옵션 | 기본 모델은 `temperature` 를 받는 `gpt-4.1-mini`. `--max-tokens` 는 추론 모델이면 `max_completion_tokens`, 나머지는 `max_tokens` 로 보낸다. 항상 새 필드만 보내면 프록시에서 상한이 무시되는 것을 2026-10-14 실측으로 확인 |
 | 호출 실패 시 원인 포함 메시지 | `error.message` + `error.code` 를 함께 출력. 429 두 종류 구분 |
 | 호출 1~2회 | SDK 자동 재시도 여부를 README 에 명시 |
 | 비용/요청 제한 안내 | 4.1절 가격표와 `usage.total_tokens` 로그 |

@@ -21,14 +21,15 @@
 | Git 루트에서 실행 | `git rev-parse --show-toplevel` 과 현재 경로 비교. 다르면 루트 경로를 안내하고 종료 | `tests/test_git_collector.py::test_subdirectory_is_rejected_with_root_hint` |
 | `git status` 수집 | `--porcelain` 형식 파싱, 이름 변경·새 파일 처리 | `test_git_collector.py::ParsePorcelainTest` |
 | `git diff` 수집 | 작업 트리 + 스테이징 + 새 파일(`--no-index`) | `test_modified_and_staged_files_appear_in_diff`, `test_untracked_file_content_is_collected_with_no_index_diff` |
-| 변경 없음 메시지 | `[INFO] 변경 사항이 없습니다. ... 종료합니다.` 종료 코드 0 | `test_cli.py::test_no_changes_exits_zero_without_api_call` |
-| API 키 환경변수, 하드코딩 금지 | `config.load_api_key` 가 `AI_API_KEY` → 제공자별 변수 순으로 읽음 | `grep -rn "sk-" ai_gitgen/` 결과 없음, `test_missing_api_key_is_reported` |
+| 변경 없음 메시지 | `[INFO] 변경 사항이 없습니다. ... 종료합니다 (종료 코드 3).` API 호출 없음, stdout 비움 | `test_cli.py::test_no_changes_exits_with_code_three_without_api_call` |
+| API 키 환경변수, 하드코딩 금지 | `config.resolve_api_key` 가 `AI_API_KEY` → 제공자별 변수 순으로 읽음. **실행 시작 시**(git 수집 전) 확인하고 없으면 종료 코드 2, 로그에는 변수 이름만 | `grep -rn "sk-" ai_gitgen/` 결과 없음, `test_missing_api_key_exits_before_git_collection`, `test_api_key_source_is_logged_by_name_only` |
+| 종료 코드 | 0 성공 / 1 실행 오류 / 2 설정·사용법 / 3 변경 없음 / 130 중단 (`config.EXIT_*`, `--help` 끝에 표시) | `test_config.py::test_exit_codes_are_distinct`, `test_cli.py` 각 시나리오 |
 | 실패 시 원인 포함 메시지 | 상태 코드별 라벨 + API `error.message` + 힌트. 네트워크·시간 초과 분리 | `test_providers.py::ClaudeProviderTest`, `SendRequestTest` |
 | 모델·temperature·max_tokens 옵션 | `--model`, `--temperature`, `--max-tokens` 와 기본값 | `test_cli.py::test_options_are_passed_to_settings` |
 | 커밋 제목 1줄 필수, 본문 선택 | `parse_commit_text` + `validate_commit`. 본문은 파일/모듈 언급 또는 불릿 | `test_validators.py::ParseCommitTest` |
 | PR 제목 + Why/What/How to Test + 섹션별 불릿 | `validate_pr` 가 섹션·불릿 검사, `polish_pr` 가 보강 | `test_validators.py::PullRequestTest` |
 | 길이 규칙 50/72, 80 | `truncate_title` 단어 경계 절단, 나머지는 본문으로 | `test_polish_truncates_title_and_moves_remainder_to_body` |
-| 검증 후 재생성 또는 후처리 | 길이·기호는 후처리, 구조 결함은 1회 재생성 후 후처리 | `test_cli.py::PullRequestCommandTest` |
+| 검증 후 재생성 또는 후처리 | 길이·기호는 후처리, 구조 결함은 1회 재생성 후 후처리. 잘린(`max_tokens`) 출력은 재생성하지 않고 안내 | `test_cli.py::PullRequestCommandTest`, `test_truncated_output_is_not_regenerated` |
 | 구분선/헤더 출력 | `--- Commit Message ---`, `--- PR Title ---`, `--- PR Body ---` | README 4장 |
 | 호출 1~2회, 로그 출력 | `AIClient.call_count`, `MAX_API_CALLS_PER_RUN = 2`. temperature 재요청과 구조 재생성은 배타적 | `test_temperature_retry_blocks_structural_regeneration` |
 | `--safe-mode` (A)+(B) | 마스킹 9종(+사용자 규칙), 제외 10패턴(+추가), 10파일/200줄/전체 2,000줄(설정·옵션으로 조정) | `tests/test_sanitizer.py` |
@@ -62,8 +63,10 @@ python3 -m ai_gitgen commit --safe-mode
 | --- | --- | --- |
 | 커밋 메시지 (safe-mode) | `commit --safe-mode` | 호출 1회. `.env` 제외(1개 파일 생략), 테스트 코드의 `ghp_` 문자열 마스킹(1개 항목). 제목 27자 |
 | PR 초안 (context 제공) | `pr --context "..." --safe-mode` | 호출 1회. 세 섹션 모두 불릿 포함, 검증 통과 |
-| 변경 없음 | `commit` (stash 후) | `[INFO] 변경 사항이 없습니다.` 종료 코드 0, API 호출 없음 |
-| 키 없음 | `commit` | `[ERROR] AI_API_KEY 환경변수가 설정되지 않았습니다.` 종료 코드 1 |
+| 변경 없음 | `commit` (stash 후) | `[INFO] 변경 사항이 없습니다. ... (종료 코드 3).` 종료 코드 3, API 호출 없음 |
+| 키 없음 | `commit` | `[ERROR] AI_API_KEY 환경변수가 설정되지 않았습니다. API 를 호출하지 않고 종료합니다.` + `--dry-run` 안내. git 수집 전 종료, 종료 코드 2 |
+| `max_tokens` 절단 (실제 프록시) | `commit --max-tokens 60`, `pr --max-tokens 150` | 출력 60/150 토큰에서 `[WARN] 출력이 max_tokens 에서 잘렸습니다`. PR 은 How to Test 가 사라지지만 재생성하지 않고 `- (작성 필요)` + 안내. README 4장 |
+| safe-mode 꺼짐 경고 | 보너스 3 데모 저장소에서 `commit --dry-run` | `[WARN] safe-mode 꺼짐: 민감정보로 보이는 값 7개 (GENERIC_SECRET 2, EMAIL 3, PHONE_KR 2) · 비밀 파일로 분류되는 파일 1개 (.env)`. README 5장 |
 | 잘못된 키 | `commit` (401 응답) | `[ERROR] 인증 실패 (HTTP 401): invalid x-api-key` + 힌트 |
 | 내장 거부 모델 | `commit --model claude-opus-5-5 --dry-run` | `[WARN] ... 생략합니다 (출처: 내장 목록)`, 요청 본문에 temperature 없음 |
 | 미지 모델 400 → 학습 | `commit --model reject-demo-model` | 1차 400 → 기록 → 2차 temperature 없이 성공. 호출 2회 |
@@ -84,11 +87,11 @@ safe-mode ON/OFF 비교(`--dry-run` 의 `<diff>` 부분):
 
 ```text
 $ python3 -m unittest discover -s tests -t .
-Ran 185 tests in 3.2s
+Ran 204 tests in 3.4s
 OK
 ```
 
-보너스 1 수행 중 추가한 기능(`pr` 의 브랜치 diff 수집, `--base`, `--fast`, `AI_API_URL`/`AI_API_MODEL`/`AI_SMALL_FAST_MODEL`)에 테스트 14개, 보너스 2 의 컨벤션 설정 파일(`convention.py`, 프롬프트·검증·CLI 반영, 코드 리뷰 반영분 포함)에 33개, 보너스 3 의 safe-mode 정책(정규식 규칙·상한·보안 리뷰 반영)에 23개를 더해 115개에서 185개가 되었습니다. 전체 커버리지는 1,420 문장 중 24 미실행으로 98% 를 유지합니다(`convention.py` 99%, `sanitizer.py` 97%, `cli.py` 100%). 아래 모듈별 표는 115개 시점의 측정값입니다.
+보너스 1 수행 중 추가한 기능(`pr` 의 브랜치 diff 수집, `--base`, `--fast`, `AI_API_URL`/`AI_API_MODEL`/`AI_SMALL_FAST_MODEL`)에 테스트 14개, 보너스 2 의 컨벤션 설정 파일(`convention.py`, 프롬프트·검증·CLI 반영, 코드 리뷰 반영분 포함)에 33개, 보너스 3 의 safe-mode 정책(정규식 규칙·상한·보안 리뷰 반영)에 23개, 사전평가 반영(키 선검사, 종료 코드, safe-mode 꺼짐 경고, 잘림 시 재생성 생략, OpenAI 출력 상한 필드, 코드 리뷰 반영)에 19개를 더해 115개에서 204개가 되었습니다. 전체 커버리지는 1,497 문장 중 23 미실행으로 98% 를 유지합니다(`cli.py`·`config.py` 100%, `commands.py` 99%, `sanitizer.py` 98%). 아래 모듈별 표는 115개 시점의 측정값입니다.
 
 커버리지 (`pytest --cov=ai_gitgen`, 외부 도구로 측정):
 
@@ -126,6 +129,10 @@ OK
 | LOW | git 사용자 설정(색상, 외부 diff)이 출력에 섞임 | `--no-color --no-ext-diff --no-textconv` 고정 |
 | LOW | 레지스트리 임시 파일 이름 고정으로 동시 실행 경쟁 | `tempfile.NamedTemporaryFile` + `os.replace` |
 | LOW (미반영) | 추론 모델에서 작은 `max_tokens` 가 추론 토큰에 소진되어 빈 출력 | 빈 출력 시 재생성 1회 후 `--max-tokens` 안내 메시지로 대응. 기본값 상향은 비용 때문에 보류 |
+
+## 5-b. AI 사전평가 반영 (2026-10-14)
+
+제출물에 대한 AI 사전평가는 16항목 중 10개 통과(63%)였습니다. FAIL 6개는 모두 "구현은 있으나 시작 시점·종료 코드·문서가 불명확" 유형이었고, 코드 5건·문서 6건으로 반영했습니다. 항목별 지적과 반영, 재검증 명령은 [12-pre-evaluation-feedback.md](12-pre-evaluation-feedback.md) 에 있습니다. 반영 과정에서 `--max-tokens` 가 수업용 프록시에서 무시되던 결함(`max_completion_tokens` 만 전송)을 발견해 함께 고쳤습니다.
 
 ## 6. 과제 목표별 근거 위치
 

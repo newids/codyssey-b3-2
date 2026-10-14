@@ -356,7 +356,7 @@ def collect_changes() -> GitChanges:
 - 인자를 리스트로 넘기고 `shell=False`(기본값)를 유지합니다. 파일명에 공백이나 특수문자가 있어도 안전합니다.
 - 추적되지 않은 새 파일(`??`)은 `git diff` 에 나오지 않습니다. 파일 목록에는 포함되므로 프롬프트에 "새 파일: ..." 로 따로 알려 주면 요약 품질이 좋아집니다.
 
-**확인:** 저장소를 깨끗하게 만든 뒤 실행하면 `[INFO] 변경 사항이 없습니다. 커밋 메시지를 생성하지 않고 종료합니다.` 가 나오고 종료 코드 0.
+**확인:** 저장소를 깨끗하게 만든 뒤 실행하면 `[INFO] 변경 사항이 없습니다. 커밋 메시지를 생성하지 않고 종료합니다.` 가 나오고 종료 코드 3(변경 없음. 0 성공·1 실행 오류·2 설정 오류와 구분해 스크립트에서 분기할 수 있게 한다).
 파일을 하나 수정하면 `[INFO] Git status 수집 완료: 1개 파일 변경 감지` 가 나온다.
 
 ### 3단계. safe-mode (마스킹 + 전송량 제한)
@@ -704,10 +704,10 @@ gh repo create codyssey-b3-2 --public --source . --push
 | 요구사항 | 확인 방법 | 증빙 위치 |
 | --- | --- | --- |
 | Git 루트에서 실행, status/diff 수집 | 수정 파일 있는 저장소에서 실행 → `[INFO] Git status 수집 완료` | README 출력 예시 |
-| 변경 없음 메시지 | 깨끗한 저장소에서 실행 → 안내 후 종료 코드 0 | README 출력 예시 |
-| API 키 환경변수, 하드코딩 없음 | `grep -rn "sk-" ai_gitgen/` 결과 없음 | 코드 |
+| 변경 없음 메시지 | 깨끗한 저장소에서 실행 → 안내 후 종료 코드 3 (`echo $?`) | README 출력 예시 |
+| API 키 환경변수, 하드코딩 없음 | `grep -rn "sk-" ai_gitgen/` 결과 없음. 키를 비우고 실행하면 git 수집 전에 종료 코드 2 | 코드, README 2장 |
 | 호출 실패 시 원인 포함 메시지 | 잘못된 키로 실행 → 401 메시지 | README 주의사항 |
-| `--model`, `--temperature`, `--max-tokens` 옵션과 기본값 | `--help` 출력 | README 사용법 |
+| `--model`, `--temperature`, `--max-tokens` 옵션과 기본값 | `--help` 출력. 옵션을 둔 이유와 바꿨을 때의 차이가 문서에 있는가 | README "옵션을 둔 이유", docs/11 |
 | `temperature` 거부 모델 관리 | `--model claude-opus-5-5 --dry-run` 경고, `models list/add/remove/reset` 동작 | README 모델 호환성 섹션, `test_model_registry.py` |
 | 커밋 제목 1줄 필수, 본문 품질 기준 | 출력 확인 + `validate_commit` 테스트 | 테스트 |
 | PR 제목 + Why/What/How to Test + 섹션별 불릿 | 출력 확인 + `validate_pr` 테스트 | 테스트 |
