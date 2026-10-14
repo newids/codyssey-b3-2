@@ -5,7 +5,7 @@ from __future__ import annotations
 from . import config
 from .convention import DEFAULT_CONVENTION, CommitConvention, Convention, PrConvention
 from .records import GitChanges, Prompt, SanitizedDiff
-from .sanitizer import mask_secrets
+from .sanitizer import MaskRules, active_rules, mask_secrets
 
 COMMIT_SYSTEM = """당신은 코드 리뷰 경험이 많은 시니어 개발자입니다. 주어진 git 변경 사항을 읽고 커밋 메시지를 작성합니다.
 
@@ -181,13 +181,16 @@ def _branch_lines(changes: GitChanges) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _protect(text: str, safe_mode: bool) -> str:
-    """safe-mode 에서는 diff 밖의 값(브랜치, 파일 목록, 작성자 메모)도 마스킹한다."""
-    return mask_secrets(text)[0] if safe_mode else text
+def _protect(text: str, safe_mode: bool, rules: MaskRules) -> str:
+    """safe-mode 에서는 diff 밖의 값(브랜치, 파일 목록, 작성자 메모)도 같은 규칙으로 마스킹한다."""
+    return mask_secrets(text, rules)[0] if safe_mode else text
 
 
-def _build_user(changes: GitChanges, sanitized: SanitizedDiff, context: str | None, instruction: str) -> str:
-    context_text = _protect(context.strip(), sanitized.safe_mode) if context and context.strip() else ""
+def _build_user(
+    changes: GitChanges, sanitized: SanitizedDiff, context: str | None, instruction: str, convention: Convention
+) -> str:
+    rules = active_rules(convention.safe_mode)
+    context_text = _protect(context.strip(), sanitized.safe_mode, rules) if context and context.strip() else ""
     context_line = f"변경 이유(작성자 제공): {context_text}\n" if context_text else ""
     safe_mode_line = ""
     if sanitized.safe_mode:
@@ -197,11 +200,11 @@ def _build_user(changes: GitChanges, sanitized: SanitizedDiff, context: str | No
     if sanitized.truncated_lines:
         safe_mode_line += f"diff 중 {sanitized.truncated_lines}줄은 길이 제한으로 생략되었습니다.\n"
     return USER_TEMPLATE.format(
-        branch=_protect(changes.branch, sanitized.safe_mode),
+        branch=_protect(changes.branch, sanitized.safe_mode, rules),
         file_count=len(changes.files),
-        context_line=_protect(_branch_lines(changes), sanitized.safe_mode) + context_line,
+        context_line=_protect(_branch_lines(changes), sanitized.safe_mode, rules) + context_line,
         safe_mode_line=safe_mode_line,
-        file_list=_protect(format_file_list(changes), sanitized.safe_mode),
+        file_list=_protect(format_file_list(changes), sanitized.safe_mode, rules),
         diff_text=sanitized.text.rstrip("\n") or "(diff 없음)",
         instruction=instruction,
     )
@@ -210,13 +213,13 @@ def _build_user(changes: GitChanges, sanitized: SanitizedDiff, context: str | No
 def build_commit_prompt(
     changes: GitChanges, sanitized: SanitizedDiff, context: str | None = None, convention: Convention = DEFAULT_CONVENTION
 ) -> Prompt:
-    return Prompt(system=commit_system_prompt(convention), user=_build_user(changes, sanitized, context, COMMIT_INSTRUCTION))
+    return Prompt(system=commit_system_prompt(convention), user=_build_user(changes, sanitized, context, COMMIT_INSTRUCTION, convention))
 
 
 def build_pr_prompt(
     changes: GitChanges, sanitized: SanitizedDiff, context: str | None = None, convention: Convention = DEFAULT_CONVENTION
 ) -> Prompt:
-    return Prompt(system=pr_system_prompt(convention), user=_build_user(changes, sanitized, context, PR_INSTRUCTION))
+    return Prompt(system=pr_system_prompt(convention), user=_build_user(changes, sanitized, context, PR_INSTRUCTION, convention))
 
 
 def build_regeneration_prompt(prompt: Prompt, previous_output: str, problems: tuple[str, ...]) -> Prompt:

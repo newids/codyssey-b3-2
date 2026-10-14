@@ -48,6 +48,18 @@ SAFE_MODE_EXCLUDED_PATTERNS = (
     "*.min.js",
 )
 
+BUILTIN_MASK_RULE_NAMES = (  # sanitizer.MASK_RULES 와 같은 순서. 설정 파일의 disabled_rules 검증에 쓴다
+    "PRIVATE_KEY",
+    "ANTHROPIC_KEY",
+    "OPENAI_KEY",
+    "AWS_KEY",
+    "GITHUB_TOKEN",
+    "JWT",
+    "GENERIC_SECRET",
+    "EMAIL",
+    "PHONE_KR",
+)
+
 # 출력 규칙
 COMMIT_TITLE_SOFT_LIMIT = 50
 COMMIT_TITLE_HARD_LIMIT = 72

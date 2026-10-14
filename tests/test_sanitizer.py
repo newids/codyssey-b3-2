@@ -1,6 +1,10 @@
 import unittest
 
-from ai_gitgen.sanitizer import is_excluded, mask_secrets, sanitize, split_diff, truncate_lines
+import re
+
+from ai_gitgen.convention import MaskRule, SafeModePolicy, compile_mask_rule
+from ai_gitgen.errors import MaskTimeoutError
+from ai_gitgen.sanitizer import active_rules, is_excluded, mask_secrets, sanitize, split_diff, truncate_lines
 
 
 def _file_diff(path: str, lines: int = 3) -> str:
@@ -96,13 +100,13 @@ class SplitAndFilterTest(unittest.TestCase):
 class SanitizeTest(unittest.TestCase):
     def test_safe_mode_off_only_applies_global_limit(self) -> None:
         diff = _file_diff("a.py", lines=10) + "AKIAABCDEFGHIJKLMNOP\n"
-        result = sanitize(diff, safe_mode=False, global_max_lines=1000)
+        result = sanitize(diff, safe_mode=False, policy=SafeModePolicy(global_max_lines=1000))
         self.assertFalse(result.safe_mode)
         self.assertIn("AKIAABCDEFGHIJKLMNOP", result.text)  # 마스킹 없음
         self.assertEqual(result.masked_count, 0)
 
     def test_safe_mode_off_truncates_huge_diff(self) -> None:
-        result = sanitize(_file_diff("a.py", lines=50), safe_mode=False, global_max_lines=10)
+        result = sanitize(_file_diff("a.py", lines=50), safe_mode=False, policy=SafeModePolicy(global_max_lines=10))
         self.assertGreater(result.truncated_lines, 0)
         self.assertIn("줄 생략", result.text)
 
@@ -116,21 +120,71 @@ class SanitizeTest(unittest.TestCase):
 
     def test_safe_mode_limits_file_count(self) -> None:
         diff = "".join(_file_diff(f"f{i}.py") for i in range(12))
-        result = sanitize(diff, safe_mode=True, max_files=10)
+        result = sanitize(diff, safe_mode=True, policy=SafeModePolicy(max_files=10))
         self.assertEqual(result.omitted_files, ("f10.py", "f11.py"))
         self.assertNotIn("diff --git a/f11.py", result.text)
 
     def test_safe_mode_limits_lines_per_file(self) -> None:
-        result = sanitize(_file_diff("a.py", lines=300), safe_mode=True, max_lines_per_file=200)
+        result = sanitize(_file_diff("a.py", lines=300), safe_mode=True, policy=SafeModePolicy(max_lines_per_file=200))
         self.assertGreater(result.truncated_lines, 0)
         self.assertNotIn("+line 299", result.text)
 
     def test_masking_happens_before_truncation(self) -> None:
         key_block = "+-----BEGIN RSA PRIVATE KEY-----\n" + "+MIIE\n" * 20 + "+-----END RSA PRIVATE KEY-----\n"
         diff = "diff --git a/k.txt b/k.txt\n" + key_block
-        result = sanitize(diff, safe_mode=True, max_lines_per_file=5)
+        result = sanitize(diff, safe_mode=True, policy=SafeModePolicy(max_lines_per_file=5))
         self.assertIn("[MASKED:PRIVATE_KEY]", result.text)
         self.assertNotIn("MIIE", result.text)
+
+
+class CustomPolicyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.policy = SafeModePolicy(
+            max_files=2,
+            max_lines_per_file=50,
+            exclude=("*.csv",),
+            mask_rules=(compile_mask_rule("INTERNAL_ID", r"EMP-\d{6}"),),
+            disabled_rules=("EMAIL",),
+        )
+
+    def test_custom_rule_masks_and_disabled_rule_is_skipped(self) -> None:
+        rules = active_rules(self.policy)
+        names = [name for name, _ in rules]
+        self.assertIn("INTERNAL_ID", names)
+        self.assertNotIn("EMAIL", names)
+        self.assertEqual(names[-1], "INTERNAL_ID")  # 사용자 규칙은 내장 규칙 뒤에
+        masked, count = mask_secrets("사번 EMP-123456, 메일 dev@example.com", rules)
+        self.assertEqual(masked, "사번 [MASKED:INTERNAL_ID], 메일 dev@example.com")
+        self.assertEqual(count, 1)
+
+    def test_default_rules_are_unchanged_without_policy(self) -> None:
+        self.assertEqual(len(active_rules(SafeModePolicy())), 9)
+
+    def test_sanitize_applies_policy_exclusions_limits_and_rules(self) -> None:
+        diff = _file_diff("a.py") + "+EMP-654321\n" + _file_diff("data.csv") + _file_diff("b.py") + _file_diff("c.py")
+        result = sanitize(diff, safe_mode=True, policy=self.policy)
+        self.assertEqual(result.omitted_files, ("data.csv", "c.py"))
+        self.assertIn("[MASKED:INTERNAL_ID]", result.text)
+        self.assertEqual(result.masked_count, 1)
+
+    def test_catastrophic_custom_rule_is_stopped_by_timeout(self) -> None:
+        # compile_mask_rule 은 (a+)+ 를 거부하므로 검증을 우회한 규칙을 직접 만들어 실행 시간 제한만 확인한다
+        evil = MaskRule("EVIL_X", re.compile(r"(a+)+$"))
+        rules = (("EVIL_X", evil.pattern),)
+        with self.assertRaises(MaskTimeoutError) as ctx:
+            mask_secrets("a" * 40 + "b", rules, timeout=0.2)
+        self.assertIn("EVIL_X", str(ctx.exception))
+        self.assertEqual(mask_secrets("fine", rules, timeout=0.2), ("fine", 0))  # 타이머가 해제되어 다음 호출은 정상
+
+    def test_builtin_rules_are_not_time_limited(self) -> None:
+        text, count = mask_secrets("AKIAABCDEFGHIJKLMNOP", timeout=0.0)
+        self.assertEqual(count, 1)
+
+    def test_mask_rule_is_immutable_value(self) -> None:
+        rule = compile_mask_rule("A_B", "x")
+        self.assertIsInstance(rule, MaskRule)
+        with self.assertRaises(Exception):
+            rule.name = "C"  # type: ignore[misc]
 
 
 if __name__ == "__main__":

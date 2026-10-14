@@ -131,12 +131,95 @@ class LoadConventionTest(unittest.TestCase):
         self.assertEqual(loaded.pr.sections, ("Why", "What", "Checklist"))
 
 
+class SafeModePolicyTest(unittest.TestCase):
+    def test_default_policy_matches_config_constants(self) -> None:
+        policy = convention.DEFAULT_CONVENTION.safe_mode
+        self.assertEqual(policy.max_files, config.SAFE_MODE_MAX_FILES)
+        self.assertEqual(policy.max_lines_per_file, config.SAFE_MODE_MAX_LINES_PER_FILE)
+        self.assertEqual(policy.global_max_lines, config.GLOBAL_MAX_DIFF_LINES)
+        self.assertEqual(policy.exclude, ())
+        self.assertEqual(policy.mask_rules, ())
+        self.assertEqual(policy.disabled_rules, ())
+        self.assertEqual(policy.excluded_patterns, config.SAFE_MODE_EXCLUDED_PATTERNS)
+
+    def test_safe_mode_section_is_parsed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_json(
+                Path(tmp),
+                {
+                    "safe_mode": {
+                        "max_files": 5,
+                        "max_lines_per_file": 80,
+                        "global_max_lines": 1500,
+                        "exclude": ["*.sqlite", "fixtures/*"],
+                        "mask_rules": [{"name": "INTERNAL_ID", "pattern": "EMP-\\d{6}"}],
+                        "disabled_rules": ["PHONE_KR"],
+                    }
+                },
+            )
+            policy = convention.load_convention(None, cwd=tmp).safe_mode
+        self.assertEqual((policy.max_files, policy.max_lines_per_file, policy.global_max_lines), (5, 80, 1500))
+        self.assertEqual(policy.exclude, ("*.sqlite", "fixtures/*"))
+        self.assertEqual(policy.excluded_patterns, config.SAFE_MODE_EXCLUDED_PATTERNS + ("*.sqlite", "fixtures/*"))
+        self.assertEqual(policy.mask_rules[0].name, "INTERNAL_ID")
+        self.assertTrue(policy.mask_rules[0].pattern.search("EMP-123456"))
+        self.assertEqual(policy.disabled_rules, ("PHONE_KR",))
+
+    def test_safe_mode_violations_are_reported(self) -> None:
+        cases = [
+            ({"safe_mode": {"max_files": 0}}, "safe_mode.max_files"),
+            ({"safe_mode": {"max_lines_per_file": 5}}, "safe_mode.max_lines_per_file"),
+            ({"safe_mode": {"global_max_lines": 50}}, "safe_mode.global_max_lines"),
+            ({"safe_mode": {"exclude": "x"}}, "safe_mode.exclude"),
+            ({"safe_mode": {"mask_rules": [{"name": "X"}]}}, "safe_mode.mask_rules"),
+            ({"safe_mode": {"mask_rules": [{"name": "bad name", "pattern": "a"}]}}, "safe_mode.mask_rules"),
+            ({"safe_mode": {"mask_rules": [{"name": "EMAIL", "pattern": "a"}]}}, "safe_mode.mask_rules"),
+            ({"safe_mode": {"mask_rules": [{"name": "A_B", "pattern": "("}]}}, "safe_mode.mask_rules"),
+            ({"safe_mode": {"mask_rules": [{"name": "A_B", "pattern": "a", "extra": 1}]}}, "safe_mode.mask_rules"),
+            ({"safe_mode": {"mask_rules": [{"name": "A_B", "pattern": "x"}, {"name": "A_B", "pattern": "y"}]}}, "safe_mode.mask_rules"),
+            ({"safe_mode": {"mask_rules": [{"name": f"R{i}", "pattern": "x"} for i in range(21)]}}, "safe_mode.mask_rules"),
+            ({"safe_mode": {"disabled_rules": ["NOPE"]}}, "safe_mode.disabled_rules"),
+            ({"safe_mode": {"disabled_rules": ["PRIVATE_KEY"]}}, "끌 수 없습니다"),
+            ({"safe_mode": {"max_files": True}}, "safe_mode.max_files"),
+            ({"safe_mode": {"max_files": 2.5}}, "safe_mode.max_files"),
+            ({"safe_mode": {"mask_rules": [{"name": "A_B", "pattern": "(a+)+$"}]}}, "중첩 반복"),
+            ({"safe_mode": {"mask_rules": [{"name": "A_B", "pattern": "(a)\\1"}]}}, "역참조"),
+            ({"safe_mode": {"mask_rules": [{"name": "A_B", "pattern": "x*"}]}}, "빈 문자열"),
+            ({"safe_mode": {"mask_rules": [{"name": "A_B", "pattern": "\\[MASKED:.*\\]"}]}}, "치환 결과"),
+            ({"safe_mode": {"bogus": 1}}, "safe_mode.bogus"),
+        ]
+        for data, key in cases:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
+                write_json(Path(tmp), data)
+                with self.assertRaises(ConventionError) as ctx:
+                    convention.load_convention(None, cwd=tmp)
+                self.assertIn(key, str(ctx.exception))
+
+    def test_oversized_config_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / config.CONVENTION_FILE_NAME
+            path.write_text('{"pr": {"footer": "' + "x" * (convention.MAX_CONFIG_BYTES + 10) + '"}}', encoding="utf-8")
+            with self.assertRaises(ConventionError) as ctx:
+                convention.load_convention(None, cwd=tmp)
+        self.assertIn("너무 큽니다", str(ctx.exception))
+
+    def test_parse_mask_option_from_cli_form(self) -> None:
+        rule = convention.parse_mask_option("ORDER_ID=ORD-[0-9]{8}")
+        self.assertEqual(rule.name, "ORDER_ID")
+        self.assertTrue(rule.pattern.fullmatch("ORD-12345678"))
+        for bad in ("noequals", "=abc", "lower=abc", "EMAIL=x", "X=("):
+            with self.subTest(bad=bad), self.assertRaises(ConventionError):
+                convention.parse_mask_option(bad)
+
+
 class DescribeAndTemplateTest(unittest.TestCase):
     def test_describe_lists_effective_values(self) -> None:
         text = convention.describe(convention.DEFAULT_CONVENTION)
         self.assertIn("기본값", text)
         self.assertIn("feat, fix", text)
         self.assertIn("Why, What, How to Test", text)
+        self.assertIn("[safe_mode]", text)
+        self.assertIn(str(config.SAFE_MODE_MAX_FILES), text)
 
     def test_template_round_trips_through_loader(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -145,6 +228,7 @@ class DescribeAndTemplateTest(unittest.TestCase):
             loaded = convention.load_convention(None, cwd=tmp)
         self.assertEqual(loaded.commit.types, config.COMMIT_TYPES)
         self.assertEqual(loaded.pr.sections, config.PR_REQUIRED_SECTIONS)
+        self.assertEqual(loaded.safe_mode, convention.DEFAULT_CONVENTION.safe_mode)
 
 
 if __name__ == "__main__":

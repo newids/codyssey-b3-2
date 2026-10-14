@@ -387,5 +387,54 @@ class ConventionCliTest(CliTestCase):
         self.assertIn("만들 수 없습니다", err)
 
 
+class SafeModePolicyCliTest(ConventionCliTest):
+    def test_cli_options_override_policy_and_are_logged(self) -> None:
+        code, out, err = self.run_cli(
+            "commit", "--dry-run", "--safe-mode", "--max-files", "3", "--max-lines", "40",
+            "--exclude", "*.md", "--mask", r"INTERNAL_ID=EMP-\d{6}", "--context", "사번 EMP-123456 요청으로 수정",
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("[INFO] safe-mode 정책: 파일 3개 · 파일당 40줄 · 전체 2000줄 · 제외 패턴 11개 · 마스킹 규칙 10개", err)
+        self.assertIn("[MASKED:INTERNAL_ID]", out)
+        self.assertNotIn("EMP-123456", out)
+
+    def test_policy_options_without_safe_mode_warn(self) -> None:
+        code, _, err = self.run_cli("commit", "--dry-run", "--max-files", "3")
+        self.assertEqual(code, 0)
+        self.assertIn("[WARN] --max-files/--max-lines/--exclude/--mask 는 --safe-mode 와 함께 쓸 때만 적용됩니다", err)
+
+    def test_bad_mask_option_is_rejected_before_api_call(self) -> None:
+        code, _, err = self.run_cli("commit", "--safe-mode", "--mask", "bad")
+        self.assertEqual(code, 1)
+        self.assertIn("--mask", err)
+        self.assertEqual(self.created, [])
+        for value in ("0", "-1", "201"):
+            code, _, err = self.run_cli("commit", "--safe-mode", "--max-files", value)
+            self.assertEqual(code, 1, value)
+            self.assertIn("--max-files 는 1~200", err)
+        self.assertEqual(self.created, [])
+
+    def test_weakened_policy_is_warned_every_run(self) -> None:
+        self._write({"safe_mode": {"disabled_rules": ["EMAIL"], "global_max_lines": 5000, "max_files": 20}})
+        code, _, err = self.run_cli("commit", "--dry-run", "--safe-mode")
+        self.assertEqual(code, 0)
+        self.assertIn("[WARN] safe-mode: 내장 마스킹 규칙 비활성 — EMAIL (출처: ", err)
+        self.assertIn("[WARN] safe-mode: 전송 상한이 기본값보다 큽니다 — 파일 20 (기본 10), 전체 줄 5000 (기본 2000)", err)
+        _, _, err_off = self.run_cli("commit", "--dry-run")
+        self.assertNotIn("내장 마스킹 규칙 비활성", err_off)  # safe-mode 가 아니면 정책 자체가 쓰이지 않는다
+
+    def test_file_policy_is_applied_and_shown(self) -> None:
+        self._write({"safe_mode": {"max_files": 4, "mask_rules": [{"name": "ORDER_ID", "pattern": "ORD-[0-9]{8}"}], "disabled_rules": ["EMAIL"]}})
+        code, out, err = self.run_cli("commit", "--dry-run", "--safe-mode", "--context", "ORD-12345678 건, 문의 dev@example.com")
+        self.assertEqual(code, 0)
+        self.assertIn("파일 4개 · 파일당 200줄", err)
+        self.assertIn("마스킹 규칙 9개", err)  # 내장 9 - EMAIL 1 + ORDER_ID 1
+        self.assertIn("[MASKED:ORDER_ID]", out)
+        self.assertIn("dev@example.com", out)  # EMAIL 규칙 비활성
+        code, out, _ = self.run_cli("convention", "show")
+        self.assertIn("[safe_mode]", out)
+        self.assertIn("ORDER_ID", out)
+
+
 if __name__ == "__main__":
     unittest.main()

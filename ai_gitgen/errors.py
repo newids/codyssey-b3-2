@@ -41,3 +41,7 @@ class OutputParseError(AiGitgenError):
 
 class ConventionError(AiGitgenError):
     """컨벤션 설정 파일(.ai-gitgen.json)을 읽을 수 없거나 값이 규격에 맞지 않는다."""
+
+
+class MaskTimeoutError(AiGitgenError):
+    """사용자 정의 마스킹 정규식이 제한 시간 안에 끝나지 않았다 (catastrophic backtracking 의심)."""

@@ -6,7 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from . import __version__, commands, config, formatter
+from . import __version__, commands, config, convention, formatter
 from .errors import AiGitgenError
 from .model_registry import ModelRegistry
 
@@ -33,6 +33,10 @@ def _add_generation_options(parser: argparse.ArgumentParser, kind: str) -> None:
     parser.add_argument("--temperature", type=float, default=config.DEFAULT_TEMPERATURE, help=f"0.0~1.0 (기본: {config.DEFAULT_TEMPERATURE})")
     parser.add_argument("--max-tokens", type=int, default=None, help=f"출력 토큰 상한 (기본: {config.DEFAULT_MAX_TOKENS[kind]})")
     parser.add_argument("--safe-mode", action="store_true", help="민감정보 마스킹과 전송량 제한 적용")
+    parser.add_argument("--max-files", type=int, default=None, metavar="N", help=f"safe-mode 최대 파일 수 (기본 {config.SAFE_MODE_MAX_FILES}, 설정 파일 safe_mode.max_files)")
+    parser.add_argument("--max-lines", type=int, default=None, metavar="N", help=f"safe-mode 파일당 최대 줄 수 (기본 {config.SAFE_MODE_MAX_LINES_PER_FILE})")
+    parser.add_argument("--exclude", action="append", default=None, metavar="GLOB", help="safe-mode 에서 이름만 보낼 파일 패턴 추가 (반복 가능)")
+    parser.add_argument("--mask", action="append", default=None, metavar="NAME=REGEX", help="safe-mode 마스킹 규칙 추가 (반복 가능). 예: INTERNAL_ID=EMP-\\d{6}")
     parser.add_argument("--context", default=None, help="변경 이유 한 줄. PR 의 Why 품질이 좋아집니다")
     parser.add_argument("--dry-run", action="store_true", help="API 를 호출하지 않고 프롬프트만 출력")
     parser.add_argument("--convention", default=None, metavar="PATH", help=f"팀 컨벤션 설정 파일 (기본: 현재 디렉터리의 {config.CONVENTION_FILE_NAME})")
@@ -83,6 +87,12 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise AiGitgenError("--model 과 --fast 는 함께 쓸 수 없습니다. 하나만 지정하세요.")
         if args.convention and args.no_convention:
             raise AiGitgenError("--convention 과 --no-convention 은 함께 쓸 수 없습니다.")
+        for name, key, value in (("--max-files", "max_files", args.max_files), ("--max-lines", "max_lines_per_file", args.max_lines)):
+            low, high = convention.LIMIT_RANGES[key]
+            if value is not None and not low <= value <= high:
+                raise AiGitgenError(f"{name} 는 {low}~{high} 사이여야 합니다 (입력: {value})")
+        for value in args.mask or ():
+            convention.parse_mask_option(value)  # 형식·정규식 오류를 API 호출 전에 알린다
 
 
 def main(argv: Sequence[str] | None = None) -> int:

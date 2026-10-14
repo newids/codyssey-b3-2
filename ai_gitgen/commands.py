@@ -15,13 +15,60 @@ from .git_collector import collect_changes
 from .model_registry import ModelRegistry
 from .providers import AIClient, get_provider
 from .records import GenerationResult, GenerationSettings, GitChanges, Prompt, SanitizedDiff
-from .sanitizer import sanitize
+from .sanitizer import active_rules, sanitize
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 
 
-def _log_collection(changes: GitChanges, sanitized: SanitizedDiff, kind: str) -> None:
+POLICY_OPTIONS = ("max_files", "max_lines", "exclude", "mask")
+
+
+def _effective_policy(args: argparse.Namespace, team: convention.Convention) -> convention.SafeModePolicy:
+    """설정 파일의 safe_mode 정책 위에 CLI 옵션을 덮어쓴다. 옵션 값은 cli._validate_args 가 먼저 검사한다."""
+    policy = team.safe_mode
+    if any(getattr(args, name, None) for name in POLICY_OPTIONS) and not args.safe_mode:
+        formatter.warn("--max-files/--max-lines/--exclude/--mask 는 --safe-mode 와 함께 쓸 때만 적용됩니다.")
+    cli_rules = tuple(convention.parse_mask_option(value) for value in (args.mask or ()))
+    merged = replace(
+        policy,
+        max_files=policy.max_files if args.max_files is None else args.max_files,
+        max_lines_per_file=policy.max_lines_per_file if args.max_lines is None else args.max_lines,
+        exclude=policy.exclude + tuple(args.exclude or ()),
+        mask_rules=policy.mask_rules + cli_rules,
+    )
+    if args.safe_mode:
+        _warn_weakened_policy(merged, team.source)
+    return merged
+
+
+def _warn_weakened_policy(policy: convention.SafeModePolicy, source: str | None) -> None:
+    """저장소가 준 설정이 보호를 약하게 만들면 매 실행마다 알린다."""
+    origin = source or "CLI 옵션"
+    if policy.disabled_rules:
+        formatter.warn(f"safe-mode: 내장 마스킹 규칙 비활성 — {', '.join(policy.disabled_rules)} (출처: {origin})")
+    default = convention.SafeModePolicy()
+    raised = [
+        f"{label} {value} (기본 {base})"
+        for label, value, base in (
+            ("파일", policy.max_files, default.max_files),
+            ("파일당 줄", policy.max_lines_per_file, default.max_lines_per_file),
+            ("전체 줄", policy.global_max_lines, default.global_max_lines),
+        )
+        if value > base
+    ]
+    if raised:
+        formatter.warn(f"safe-mode: 전송 상한이 기본값보다 큽니다 — {', '.join(raised)} (출처: {origin})")
+
+
+def _describe_policy(policy: convention.SafeModePolicy) -> str:
+    return (
+        f"파일 {policy.max_files}개 · 파일당 {policy.max_lines_per_file}줄 · 전체 {policy.global_max_lines}줄"
+        f" · 제외 패턴 {len(policy.excluded_patterns)}개 · 마스킹 규칙 {len(active_rules(policy))}개"
+    )
+
+
+def _log_collection(changes: GitChanges, sanitized: SanitizedDiff, kind: str, policy: convention.SafeModePolicy) -> None:
     if kind == "pr":
         formatter.info(f"현재 브랜치: {changes.branch}")
         if changes.base_branch:
@@ -31,6 +78,7 @@ def _log_collection(changes: GitChanges, sanitized: SanitizedDiff, kind: str) ->
     formatter.info(f"Git status 수집 완료: {len(changes.files)}개 파일 변경 감지")
     formatter.info(f"Git diff 수집 완료: {changes.line_count}줄")
     if sanitized.safe_mode:
+        formatter.info(f"safe-mode 정책: {_describe_policy(policy)}")
         formatter.info(f"safe-mode: {sanitized.masked_count}개 항목 마스킹, {len(sanitized.omitted_files)}개 파일 생략")
     if sanitized.truncated_lines:
         formatter.warn(f"diff {sanitized.truncated_lines}줄이 길이 제한으로 생략되었습니다. 큰 변경은 커밋을 나누는 것을 권장합니다.")
@@ -98,6 +146,8 @@ def _load_convention(args: argparse.Namespace) -> convention.Convention:
 
 def run_generate(args: argparse.Namespace, kind: str, registry: ModelRegistry) -> int:
     team = _load_convention(args)  # 설정 파일 오류는 API 를 부르기 전에 알린다
+    policy = _effective_policy(args, team)
+    team = replace(team, safe_mode=policy)  # 프롬프트의 브랜치·메모 마스킹도 같은 규칙을 쓴다
     if kind == "pr":
         changes = collect_changes(include_branch=True, base=getattr(args, "base", None))
     else:
@@ -107,8 +157,8 @@ def run_generate(args: argparse.Namespace, kind: str, registry: ModelRegistry) -
         formatter.info(f"변경 사항이 없습니다. {target} 생성하지 않고 종료합니다.")
         return EXIT_OK
 
-    sanitized = sanitize(changes.diff_text, safe_mode=args.safe_mode)
-    _log_collection(changes, sanitized, kind)
+    sanitized = sanitize(changes.diff_text, safe_mode=args.safe_mode, policy=policy)
+    _log_collection(changes, sanitized, kind, policy)
     build = prompts.build_commit_prompt if kind == "commit" else prompts.build_pr_prompt
     prompt = build(changes, sanitized, args.context, team)
     settings = _resolve_settings(args, registry, kind)
