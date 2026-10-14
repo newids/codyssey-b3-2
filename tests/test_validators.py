@@ -116,5 +116,92 @@ class PullRequestTest(unittest.TestCase):
         self.assertEqual(validators.missing_sections(polished.body), ())
 
 
+class ConventionValidationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        from ai_gitgen.convention import CommitConvention, Convention, PrConvention
+
+        self.forbidden = Convention(commit=CommitConvention(types=("feat", "fix"), scope="forbidden"))
+        self.required = Convention(commit=CommitConvention(scope="required"))
+        self.pr_conv = Convention(
+            pr=PrConvention(sections=("Why", "What", "How to Test", "Risks"), checklist=("테스트 통과", "README 갱신"), footer="ai-gitgen 으로 생성")
+        )
+
+    def test_forbidden_scope_is_a_problem_fixed_by_polish(self) -> None:
+        message = CommitMessage(title="feat(search): 금액 범위 옵션 추가", body="- x")
+        report = validators.validate_commit(message, self.forbidden)
+        self.assertIn("스코프", " ".join(report.problems))
+        self.assertFalse(report.needs_regeneration)
+        polished = validators.polish_commit(message, self.forbidden)
+        self.assertEqual(polished.title, "feat: 금액 범위 옵션 추가")
+        self.assertEqual(message.title, "feat(search): 금액 범위 옵션 추가")  # 원본 유지
+
+    def test_type_outside_convention_needs_regeneration(self) -> None:
+        report = validators.validate_commit(CommitMessage(title="refactor: 정리"), self.forbidden)
+        self.assertTrue(report.needs_regeneration)
+        self.assertIn("feat, fix", " ".join(report.problems))
+
+    def test_required_scope_missing_needs_regeneration(self) -> None:
+        report = validators.validate_commit(CommitMessage(title="feat: 옵션 추가", body="- x"), self.required)
+        self.assertTrue(report.needs_regeneration)
+        self.assertIn("스코프", " ".join(report.problems))
+        ok = validators.validate_commit(CommitMessage(title="feat(cli): 옵션 추가", body="- x"), self.required)
+        self.assertTrue(ok.is_valid)
+
+    def test_parse_commit_uses_convention_types(self) -> None:
+        message = validators.parse_commit_text("설명문\nfix: 널 체크\n\n- a", self.forbidden)
+        self.assertEqual(message.title, "fix: 널 체크")
+
+    def test_custom_section_is_required_and_filled(self) -> None:
+        draft = validators.parse_pr_text(GOOD_PR)
+        report = validators.validate_pr(draft, self.pr_conv)
+        self.assertIn('"## Risks" 섹션이 없습니다.', report.problems)
+        polished = validators.polish_pr(draft, self.pr_conv)
+        self.assertIn("## Risks\n- (작성 필요)", polished.body)
+
+    def test_polish_appends_checklist_and_footer_once(self) -> None:
+        draft = validators.parse_pr_text(GOOD_PR)
+        polished = validators.polish_pr(draft, self.pr_conv)
+        self.assertIn("## Checklist\n- [ ] 테스트 통과\n- [ ] README 갱신", polished.body)
+        self.assertTrue(polished.body.rstrip().endswith("ai-gitgen 으로 생성"))
+        again = validators.polish_pr(polished, self.pr_conv)
+        self.assertEqual(again.body, polished.body)  # 멱등
+        self.assertNotIn("Checklist", validators.polish_pr(draft).body)
+
+    def test_model_written_checklist_is_replaced_by_team_items(self) -> None:
+        draft = PullRequestDraft(title="feat: x", body=GOOD_PR.split("\n\n", 1)[1] + "\n\n## Checklist\n- [ ] 모델이 쓴 항목")
+        polished = validators.polish_pr(draft, self.pr_conv)
+        self.assertNotIn("모델이 쓴 항목", polished.body)
+        self.assertIn("- [ ] 테스트 통과", polished.body)
+
+    def test_footer_text_inside_a_bullet_is_not_stripped(self) -> None:
+        from ai_gitgen.convention import Convention, PrConvention
+
+        conv = Convention(pr=PrConvention(footer="all done"))
+        body = "## Why\n- a\n\n## What\n- b\n\n## How to Test\n- run it, all done"
+        polished = validators.polish_pr(PullRequestDraft(title="feat: x", body=body), conv)
+        self.assertIn("- run it, all done\n\n---\nall done", polished.body)
+        self.assertEqual(validators.polish_pr(polished, conv).body, polished.body)
+
+    def test_forbidden_scope_is_stripped_from_pr_title(self) -> None:
+        draft = PullRequestDraft(title="feat(search): 옵션 추가", body=GOOD_PR.split("\n\n", 1)[1])
+        report = validators.validate_pr(draft, self.forbidden)
+        self.assertIn("PR 제목에 스코프", " ".join(report.problems))
+        self.assertFalse(report.needs_regeneration)
+        self.assertEqual(validators.polish_pr(draft, self.forbidden).title, "feat: 옵션 추가")
+
+    def test_test_command_is_required_and_inserted(self) -> None:
+        from ai_gitgen.convention import Convention, PrConvention
+
+        conv = Convention(pr=PrConvention(test_command="python -m unittest discover -s tests -t ."))
+        draft = validators.parse_pr_text(GOOD_PR)
+        report = validators.validate_pr(draft, conv)
+        self.assertIn("컨벤션 테스트 명령", " ".join(report.problems))
+        self.assertFalse(report.needs_regeneration)
+        polished = validators.polish_pr(draft, conv)
+        self.assertIn("## How to Test\n- 전체 테스트: `python -m unittest discover -s tests -t .`\n- python app.py 실행", polished.body)
+        self.assertTrue(validators.validate_pr(polished, conv).is_valid)
+        self.assertEqual(validators.polish_pr(polished, conv).body, polished.body)
+
+
 if __name__ == "__main__":
     unittest.main()

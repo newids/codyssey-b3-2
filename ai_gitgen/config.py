@@ -55,6 +55,10 @@ PR_TITLE_HARD_LIMIT = 80
 PR_REQUIRED_SECTIONS = ("Why", "What", "How to Test")
 COMMIT_TYPES = ("feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "ci", "build", "revert")
 PLACEHOLDER_BULLET = "- (작성 필요)"
+CHECKLIST_SECTION = "Checklist"  # 컨벤션의 checklist 항목을 붙이는 섹션 이름
+
+# 팀 컨벤션 설정 파일. 저장소 루트(실행 위치)에서 찾고, --convention 으로 다른 경로를 줄 수 있다
+CONVENTION_FILE_NAME = ".ai-gitgen.json"
 
 
 def registry_path() -> Path:

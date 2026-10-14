@@ -300,5 +300,92 @@ class ArgumentValidationTest(CliTestCase):
         self.assertIn("중단", err)
 
 
+class ConventionCliTest(CliTestCase):
+    """컨벤션 파일은 작업 디렉터리에서 찾으므로 임시 디렉터리로 이동해 실행한다."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._cwd = os.getcwd()
+        os.chdir(self._tmp.name)
+
+    def tearDown(self) -> None:
+        os.chdir(self._cwd)
+        super().tearDown()
+
+    def _write(self, data: dict, name: str = ".ai-gitgen.json") -> str:
+        import json
+
+        path = os.path.join(self._tmp.name, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+        return path
+
+    def test_file_in_cwd_changes_prompt_and_strips_scope(self) -> None:
+        self._write({"commit": {"scope": "forbidden", "rules": ["파일 이름 뒤 조사는 띄어 쓴다"]}})
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        code, out, err = self.run_cli("commit")
+        self.assertEqual(code, 0)
+        self.assertIn("[INFO] 컨벤션 적용: ", err)
+        self.assertIn(".ai-gitgen.json", err)
+        self.assertIn("조사는 띄어 쓴다", self.client.prompts_seen[0][0])
+        self.assertIn("--- Commit Message ---\nfeat: 인사 문구 변경 및 반환값 추가", out)
+        self.assertIn("스코프", err)  # 후처리 보정 경고
+
+    def test_no_convention_flag_ignores_file(self) -> None:
+        self._write({"commit": {"scope": "forbidden"}})
+        FakeClient.queue = [result(GOOD_COMMIT)]
+        _, out, err = self.run_cli("commit", "--no-convention")
+        self.assertNotIn("컨벤션 적용", err)
+        self.assertIn("feat(app): 인사 문구", out)
+
+    def test_explicit_path_and_pr_extras(self) -> None:
+        path = self._write(
+            {"pr": {"test_command": "python -m unittest discover -s tests -t .", "checklist": ["테스트 통과"], "footer": "초안은 ai-gitgen 으로 생성"}},
+            name="team.json",
+        )
+        FakeClient.queue = [result(GOOD_PR)]
+        code, out, err = self.run_cli("pr", "--convention", path)
+        self.assertEqual(code, 0)
+        self.assertIn("python -m unittest discover -s tests -t .", self.client.prompts_seen[0][0])
+        self.assertIn("## Checklist\n- [ ] 테스트 통과", out)
+        self.assertIn("초안은 ai-gitgen 으로 생성", out)
+
+    def test_both_convention_flags_is_an_error(self) -> None:
+        code, _, err = self.run_cli("commit", "--convention", "x.json", "--no-convention")
+        self.assertEqual(code, 1)
+        self.assertIn("함께 쓸 수 없습니다", err)
+
+    def test_invalid_file_fails_before_api_call(self) -> None:
+        self._write({"commit": {"scope": "maybe"}})
+        code, _, err = self.run_cli("commit")
+        self.assertEqual(code, 1)
+        self.assertIn("[ERROR]", err)
+        self.assertIn("commit.scope", err)
+        self.assertEqual(self.created, [])
+
+    def test_convention_show_and_init(self) -> None:
+        code, out, _ = self.run_cli("convention", "show")
+        self.assertEqual(code, 0)
+        self.assertIn("기본값", out)
+        code, _, err = self.run_cli("convention", "init")
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.exists(os.path.join(self._tmp.name, ".ai-gitgen.json")))
+        self.assertIn("[DONE]", err)
+        code, _, err = self.run_cli("convention", "init")
+        self.assertEqual(code, 1)
+        self.assertIn("이미 있습니다", err)
+        code, out, _ = self.run_cli("convention", "show")
+        self.assertIn(".ai-gitgen.json", out)
+
+    def test_convention_init_reports_os_errors(self) -> None:
+        os.chmod(self._tmp.name, 0o500)
+        try:
+            code, _, err = self.run_cli("convention", "init")
+        finally:
+            os.chmod(self._tmp.name, 0o700)
+        self.assertEqual(code, 1)
+        self.assertIn("만들 수 없습니다", err)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import sys
+from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 
-from . import config, formatter, prompts, validators
-from .errors import AiGitgenError, UnsupportedParameterError
+from . import config, convention, formatter, prompts, validators
+from .errors import AiGitgenError, ConventionError, UnsupportedParameterError
 from .git_collector import collect_changes
 from .model_registry import ModelRegistry
 from .providers import AIClient, get_provider
@@ -83,7 +86,18 @@ def _log_usage(client: AIClient, results: list[GenerationResult]) -> None:
     )
 
 
+def _load_convention(args: argparse.Namespace) -> convention.Convention:
+    """--no-convention 이면 기본값, 아니면 --convention 경로 또는 작업 디렉터리의 .ai-gitgen.json."""
+    if getattr(args, "no_convention", False):
+        return convention.DEFAULT_CONVENTION
+    loaded = convention.load_convention(getattr(args, "convention", None))
+    if not loaded.is_default:
+        formatter.info(f"컨벤션 적용: {loaded.source}")
+    return loaded
+
+
 def run_generate(args: argparse.Namespace, kind: str, registry: ModelRegistry) -> int:
+    team = _load_convention(args)  # 설정 파일 오류는 API 를 부르기 전에 알린다
     if kind == "pr":
         changes = collect_changes(include_branch=True, base=getattr(args, "base", None))
     else:
@@ -96,7 +110,7 @@ def run_generate(args: argparse.Namespace, kind: str, registry: ModelRegistry) -
     sanitized = sanitize(changes.diff_text, safe_mode=args.safe_mode)
     _log_collection(changes, sanitized, kind)
     build = prompts.build_commit_prompt if kind == "commit" else prompts.build_pr_prompt
-    prompt = build(changes, sanitized, args.context)
+    prompt = build(changes, sanitized, args.context, team)
     settings = _resolve_settings(args, registry, kind)
 
     if args.dry_run:
@@ -109,11 +123,7 @@ def run_generate(args: argparse.Namespace, kind: str, registry: ModelRegistry) -
     results = [result]
     _warn_stop_reason(result)
 
-    parse, validate, polish = (
-        (validators.parse_commit_text, validators.validate_commit, validators.polish_commit)
-        if kind == "commit"
-        else (validators.parse_pr_text, validators.validate_pr, validators.polish_pr)
-    )
+    parse, validate, polish = _validators_for(kind, team)
     draft = parse(result.text)
     report = validate(draft)
     if report.needs_regeneration and client.call_count < config.MAX_API_CALLS_PER_RUN:
@@ -142,6 +152,38 @@ def run_generate(args: argparse.Namespace, kind: str, registry: ModelRegistry) -
     else:
         formatter.done("PR 초안 생성 완료")
         sys.stdout.write("\n" + formatter.render_pr(final))
+    return EXIT_OK
+
+
+def _validators_for(kind: str, team: convention.Convention) -> tuple[Callable, Callable, Callable]:
+    """kind 에 맞는 (파싱, 검증, 후처리) 함수. 컨벤션을 미리 바인딩한다."""
+    if kind == "commit":
+        return (
+            functools.partial(validators.parse_commit_text, convention=team),
+            functools.partial(validators.validate_commit, convention=team),
+            functools.partial(validators.polish_commit, convention=team),
+        )
+    return (
+        validators.parse_pr_text,
+        functools.partial(validators.validate_pr, convention=team),
+        functools.partial(validators.polish_pr, convention=team),
+    )
+
+
+def run_convention(args: argparse.Namespace) -> int:
+    if args.convention_command == "show":
+        sys.stdout.write(convention.describe(convention.load_convention(args.convention)))
+        return EXIT_OK
+    target = Path.cwd() / config.CONVENTION_FILE_NAME
+    try:
+        with open(target, "x", encoding="utf-8") as fh:  # 배타적 생성: 기존 파일·심볼릭 링크를 덮어쓰지 않는다
+            fh.write(convention.template_json())
+    except FileExistsError:
+        formatter.error(f"{target} 가 이미 있습니다. 내용을 확인하려면 `convention show` 를 실행하세요.")
+        return EXIT_ERROR
+    except OSError as exc:
+        raise ConventionError(f"컨벤션 파일을 만들 수 없습니다: {target} ({exc.strerror})") from exc
+    formatter.done(f"기본 컨벤션 파일을 만들었습니다: {target}\n값을 저장소 규칙에 맞게 고친 뒤 commit / pr 을 실행하세요.")
     return EXIT_OK
 
 

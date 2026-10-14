@@ -35,6 +35,8 @@ def _add_generation_options(parser: argparse.ArgumentParser, kind: str) -> None:
     parser.add_argument("--safe-mode", action="store_true", help="민감정보 마스킹과 전송량 제한 적용")
     parser.add_argument("--context", default=None, help="변경 이유 한 줄. PR 의 Why 품질이 좋아집니다")
     parser.add_argument("--dry-run", action="store_true", help="API 를 호출하지 않고 프롬프트만 출력")
+    parser.add_argument("--convention", default=None, metavar="PATH", help=f"팀 컨벤션 설정 파일 (기본: 현재 디렉터리의 {config.CONVENTION_FILE_NAME})")
+    parser.add_argument("--no-convention", action="store_true", help="설정 파일이 있어도 기본 컨벤션 사용")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("model_id")
     remove.add_argument("--provider", choices=config.PROVIDER_NAMES, default=config.default_provider())
     models_sub.add_parser("reset", help="학습·제외 목록 초기화")
+
+    conv = sub.add_parser("convention", help=f"팀 컨벤션 설정 파일({config.CONVENTION_FILE_NAME}) 관리")
+    conv_sub = conv.add_subparsers(dest="convention_command", required=True)
+    show = conv_sub.add_parser("show", help="적용될 컨벤션 값 출력")
+    show.add_argument("--convention", default=None, metavar="PATH", help="확인할 설정 파일 경로")
+    conv_sub.add_parser("init", help=f"현재 디렉터리에 기본값으로 채운 {config.CONVENTION_FILE_NAME} 생성")
     return parser
 
 
@@ -73,6 +81,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise AiGitgenError(f"--max-tokens 는 1 이상이어야 합니다 (입력: {args.max_tokens})")
         if args.model and args.fast:
             raise AiGitgenError("--model 과 --fast 는 함께 쓸 수 없습니다. 하나만 지정하세요.")
+        if args.convention and args.no_convention:
+            raise AiGitgenError("--convention 과 --no-convention 은 함께 쓸 수 없습니다.")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -83,6 +93,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         registry = ModelRegistry(config.registry_path())
         if args.command == "models":
             return commands.run_models(args, registry)
+        if args.command == "convention":
+            return commands.run_convention(args)
         return commands.run_generate(args, args.command, registry)
     except AiGitgenError as exc:
         formatter.error(str(exc))

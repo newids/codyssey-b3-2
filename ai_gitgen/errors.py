@@ -37,3 +37,7 @@ class NotGitRepositoryError(GitCommandError):
 
 class OutputParseError(AiGitgenError):
     """모델 출력에서 제목을 찾을 수 없다."""
+
+
+class ConventionError(AiGitgenError):
+    """컨벤션 설정 파일(.ai-gitgen.json)을 읽을 수 없거나 값이 규격에 맞지 않는다."""
