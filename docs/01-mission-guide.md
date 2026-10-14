@@ -685,9 +685,19 @@ gh repo create codyssey-b3-2 --public --source . --push
 
 ### 보너스 3. 안전 모드 고도화
 
-1. 마스킹 규칙을 설정 파일에서 추가할 수 있게 한다 (`"mask_rules": [{"name": "INTERNAL_ID", "pattern": "EMP-\\d{6}"}]`).
-2. `--max-files`, `--max-lines` 옵션으로 상한을 바꿀 수 있게 한다.
-3. **증빙:** 정책 표(숫자 포함) + 같은 diff로 safe-mode ON/OFF `--dry-run` 결과 비교.
+1. 정책을 **숫자로** 표로 정리한다: 제외 패턴 수, 마스킹 규칙 수, 파일 수·파일당 줄·전체 줄 상한, 각 값의 허용 범위. 숫자가 없는 정책은 증빙이 되지 않는다.
+2. 조정 지점을 둔다. 이 저장소의 실제 구현은 보너스 2 의 설정 파일에 `safe_mode` 섹션을 더하고 CLI 옵션으로 덮어쓰는 구조다:
+
+```json
+{"safe_mode": {"max_files": 8, "max_lines_per_file": 100, "global_max_lines": 2000,
+               "exclude": ["*.csv"], "mask_rules": [{"name": "INTERNAL_ID", "pattern": "EMP-\\d{6}"}],
+               "disabled_rules": ["PHONE_KR"]}}
+```
+
+   옵션은 `--max-files N`, `--max-lines N`, `--exclude GLOB`, `--mask NAME=REGEX` (반복 가능).
+3. **저장소가 주는 정규식은 신뢰하지 않는다.** 역추적 폭발(`(a+)+$`)로 도구가 멈출 수 있으므로 중첩 반복·역참조를 거부하고 실행 시간을 제한한다(CPython `re` 는 `SIGALRM` 으로 끊을 수 있다). 빈 문자열에 매치되는 패턴(`x*`)도 거부한다. 보호를 빼는 설정(규칙 끄기, 상한 올리기)은 제한하고 매 실행 경고한다.
+4. 마스킹은 diff 뿐 아니라 브랜치 이름·파일 목록·`--context` 에도 같은 규칙으로 적용한다.
+5. **증빙:** 정책 표 + 같은 diff 로 `--dry-run` 의 safe-mode OFF/ON 비교 (줄 수, 생략 파일, 마스킹 건수, 노출 건수). 실제 수행 결과는 [10-bonus-3-report.md](10-bonus-3-report.md).
 
 ## 6. 제출 전 점검표
 

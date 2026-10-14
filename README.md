@@ -9,6 +9,8 @@ Codyssey 미션 B3-2 "내가 고친 코드 설명을 AI가 대신 써주는 도�
 | --- | --- |
 | [docs/08-bonus-1-report.md](docs/08-bonus-1-report.md) | 보너스 1: 실제 저장소에 적용한 PR 링크와 "AI 초안 → 최종 PR" 변경점 |
 | [docs/09-bonus-2-report.md](docs/09-bonus-2-report.md) | 보너스 2: B2-1 스타일 분석 → 팀 컨벤션 정의 → 설정 파일 적용 전/후 비교 |
+| [docs/10-bonus-3-report.md](docs/10-bonus-3-report.md) | 보너스 3: safe-mode 정책(숫자 기준), 정규식 규칙 확장, ON/OFF 비교, 보안 리뷰 반영 |
+| [docs/11-temperature-experiment.md](docs/11-temperature-experiment.md) | temperature 0.0 / 0.5 / 1.0 × 3회 실험 원문과 해석 |
 | [docs/01-mission-guide.md](docs/01-mission-guide.md) | 요구사항 분석, 설계, 구현 순서, 보너스 진행법, 점검표 |
 | [docs/02-learning-materials.md](docs/02-learning-materials.md) | HTTP/REST, Messages API, 파라미터, git·subprocess, 프롬프트, 검증, 보안·비용 학습 자료 |
 | [docs/03-evaluation-answers.md](docs/03-evaluation-answers.md) | 과제 목표 5문항 답변과 예상 추가 질문 |
@@ -94,9 +96,11 @@ python3 -m ai_gitgen pr --convention team.json    # 팀 컨벤션 설정 파일 
 | `--model` | `AI_API_MODEL`, 없으면 claude `claude-sonnet-4-6` / openai `gpt-4.1-mini` | 모델 ID |
 | `--fast` | 꺼짐 | `AI_SMALL_FAST_MODEL`(없으면 제공자별 소형 모델)로 생성. `--model` 과 함께 쓸 수 없음 |
 | `--base` (pr 전용) | `origin/HEAD` → `main` → `master` 자동 탐지 | PR 비교 기준 브랜치. 기준 이후 커밋과 미커밋 변경을 함께 수집 |
-| `--temperature` | `0.3` | 0.0(결정적) ~ 1.0(다양). 커밋/PR 은 낮은 값 권장 |
+| `--temperature` | `0.3` | 0.0(재현성 높음) ~ 1.0(표기·분량 변동). 실험 기록은 docs/11 |
 | `--max-tokens` | commit `512`, pr `1024` | 출력 토큰 상한. 잘리면 `[WARN]` 출력 |
 | `--safe-mode` | 꺼짐 | 5장 참고 |
+| `--max-files`, `--max-lines` | `10`, `200` | safe-mode 전송 상한 (파일 수 1~200, 파일당 줄 10~5000). 5장 |
+| `--exclude GLOB`, `--mask NAME=REGEX` | 없음 | safe-mode 제외 패턴·마스킹 규칙 추가 (반복 가능). 5장 |
 | `--context` | 없음 | 변경 이유 한 줄. PR 의 Why 섹션 품질이 좋아집니다 |
 | `--dry-run` | 꺼짐 | 프롬프트만 출력, API 호출·비용 없음 |
 | `--convention` | 현재 디렉터리의 `.ai-gitgen.json` | 팀 컨벤션 설정 파일 경로. 8장 참고 |
@@ -205,23 +209,46 @@ $ python -m ai_gitgen pr
 
 ## 5. 민감정보 대응 (safe-mode)
 
-`git diff` 에는 API 키, 개인정보가 섞일 수 있습니다. `--safe-mode` 는 세 층을 적용합니다.
+`git diff` 에는 API 키, 개인정보, 조직 내부 식별자가 섞일 수 있습니다. `--safe-mode` 는 세 층을 적용하고, 각 층은 설정 파일(`.ai-gitgen.json` 의 `safe_mode` 섹션, 8장과 같은 파일)과 CLI 옵션으로 조정할 수 있습니다. 우선순위는 내장 기본값 < 설정 파일 < CLI 옵션입니다.
 
-| 층 | 정책 |
-| --- | --- |
-| 제외 | `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js` 는 보내지 않고 파일 이름만 전달 |
-| 마스킹 | 프라이빗 키 블록, `sk-ant-`/`sk-`/`AKIA`/`ghp_` 접두 키, JWT, `api_key = "..."` 형태 할당값, 이메일, 휴대전화 번호 → `[MASKED:종류]` |
-| 제한 | 최대 10개 파일, 파일당 최대 200줄. 넘는 부분은 `... (N줄 생략)` |
+| 층 | 정책 | 기본값 | 설정 파일 `safe_mode.*` | CLI | 범위 |
+| --- | --- | --- | --- | --- | --- |
+| 제외 | 패턴에 맞는 파일은 보내지 않고 `[생략된 파일: ...]` 에 이름만 | `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.lock`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `*.min.js` | `exclude` (추가만) | `--exclude GLOB` | 최대 50개 |
+| 마스킹 | 정규식에 맞는 값을 `[MASKED:이름]` 으로. diff 와 브랜치·파일 목록·`--context` 에 같은 규칙 | 프라이빗 키 블록, `sk-ant-`/`sk-`/`AKIA`/`ghp_` 접두 키, JWT, `api_key = "..."` 형태 할당값, 이메일, 휴대전화 (9종) | `mask_rules: [{"name", "pattern"}]`, `disabled_rules` (`GENERIC_SECRET`, `EMAIL`, `PHONE_KR` 만) | `--mask NAME=REGEX` | 사용자 규칙 20개, 패턴 200자, 규칙당 실행 2초 |
+| 제한 | 넘는 파일은 이름만, 넘는 줄은 `... (N줄 생략)` | 10개 파일, 파일당 200줄, 전체 2,000줄 | `max_files`, `max_lines_per_file`, `global_max_lines` | `--max-files`, `--max-lines` | 1~200, 10~5000, 100~20000 |
 
-safe-mode 가 꺼져 있어도 전체 2,000줄 상한은 항상 적용됩니다.
+전체 2,000줄 상한은 safe-mode 가 꺼져 있어도 적용됩니다. 적용된 정책은 매 실행 `[INFO] safe-mode 정책: 파일 10개 · 파일당 200줄 · 전체 2000줄 · 제외 패턴 10개 · 마스킹 규칙 9개` 로 출력되고 `convention show` 로도 볼 수 있습니다.
 
-같은 데모 저장소에서 `--dry-run` 으로 비교한 결과입니다.
+```bash
+python3 -m ai_gitgen commit --safe-mode --mask "INTERNAL_ID=EMP-\d{6}" --exclude "*.csv"   # 조직 식별자 규칙과 제외 패턴 추가
+python3 -m ai_gitgen commit --safe-mode --max-files 5 --max-lines 100                        # 전송 상한 조정
+```
 
-| | safe-mode OFF | safe-mode ON |
-| --- | --- | --- |
-| `.env` 파일(토큰, 이메일 포함) | diff 전체가 프롬프트에 포함 | 파일 제외, `[생략된 파일: .env]` 로 표시 |
-| 테스트 코드 안의 `ghp_...` 문자열 | 그대로 포함 | `[MASKED:GITHUB_TOKEN]` |
-| 로그 | 없음 | `[INFO] safe-mode: 1개 항목 마스킹, 1개 파일 생략` |
+설정 파일 예시 (`.ai-gitgen.json`):
+
+```json
+{
+  "safe_mode": {
+    "max_files": 8,
+    "max_lines_per_file": 100,
+    "exclude": ["*.csv", "docs/*"],
+    "mask_rules": [{"name": "INTERNAL_ID", "pattern": "EMP-\\d{6}"}, {"name": "ORDER_ID", "pattern": "ORD-\\d{8}"}],
+    "disabled_rules": []
+  }
+}
+```
+
+같은 변경(12개 파일 405줄, `.env`·고객 CSV·사번 포함)을 `--dry-run` 으로 비교한 결과입니다. 전체 표는 [docs/10-bonus-3-report.md](docs/10-bonus-3-report.md) 4장.
+
+| | OFF | ON (기본값) | ON (위 설정 파일) |
+| --- | --- | --- | --- |
+| `<diff>` 줄 수 | 389 | 270 | 154 |
+| 생략된 파일 | 0 | 2 (`.env` 외 1) | 5 (`.env`, CSV, docs, …) |
+| 마스킹 | 0 | 4 (이메일 2, 전화 2) | 7 (사번 7) |
+| 사번 `EMP-` 노출 | 13 | 12 (내장 규칙이 모르는 패턴) | **0** (`--context` 포함) |
+| 이메일 노출 | 3 | 0 | 0 |
+
+**설정 파일은 저장소 소유자가 통제합니다.** 보호를 더하는 설정(제외·규칙 추가)은 자유롭지만, 빼는 설정은 제한됩니다: 자격 증명 규칙 6종(`PRIVATE_KEY`, `ANTHROPIC_KEY`, `OPENAI_KEY`, `AWS_KEY`, `GITHUB_TOKEN`, `JWT`)은 끌 수 없고, 규칙을 끄거나 상한을 기본값보다 올리면 매 실행 `[WARN]` 으로 출처와 함께 알립니다. 사용자 정규식은 중첩 반복(`(a+)+`)·역참조·빈 매치 패턴을 거부하고, 실행 시간이 2초를 넘으면 규칙 이름과 함께 중단합니다(Unix 주 스레드에서만 동작하는 시그널 기반 제한). 남의 저장소에서는 `--no-convention` 으로 파일을 무시할 수 있습니다.
 
 **한계.** 정규식은 형태가 알려진 값만 잡습니다. 임의 문자열 비밀번호는 통과할 수 있습니다. 비밀값은 커밋에 넣지 않는 것이 원칙이고, safe-mode 는 보조 수단입니다. 전송 내용은 `--dry-run` 으로 미리 확인할 수 있습니다.
 
@@ -302,6 +329,7 @@ python3 -m ai_gitgen pr --no-convention           # 파일을 무시하고 기�
 | `pr.checklist` | 없음 | 후처리 | `## Checklist` 섹션에 `- [ ]` 항목으로 추가. 모델이 쓴 체크리스트는 팀 항목으로 교체 (`sections` 에 `Checklist` 를 같이 쓰면 오류) |
 | `pr.footer` | 없음 | 후처리 | 본문 끝에 `---` 뒤 한 줄 추가 (예: 도구 사용 표기) |
 | `pr.rules` | 없음 | 프롬프트 `[팀 컨벤션]` 블록 | 자유 문장 규칙 |
+| `safe_mode.*` | 5장 표 | sanitizer | safe-mode 전송 상한·제외 패턴·마스킹 규칙. 5장 참고 |
 
 모르는 키, 잘못된 타입, 비어 있거나 중복된 `types`/`sections`, 범위 밖 숫자, 여러 줄 푸터는 키 이름을 포함한 `[ERROR]` 로 거부하고 API 를 호출하지 않습니다. 설정 파일은 저장소 안에 있으므로 `rules` 는 프롬프트에 그대로 들어갑니다. 남의 저장소를 받아 실행할 때는 `[INFO] 컨벤션 적용:` 로그로 어떤 파일이 읽혔는지 확인하거나 `--no-convention` 을 쓰세요 (규칙은 최대 20개, 각 300자로 제한).
 
@@ -331,17 +359,17 @@ ai_gitgen/
   cli.py             옵션 해석, 최상위 예외 처리, 종료 코드
   commands.py        commit / pr / models / convention 실행 흐름, 호출 횟수 제한
   config.py          기본값 상수, 환경변수
-  convention.py      팀 컨벤션 설정 파일(.ai-gitgen.json) 읽기·검증, 기본 컨벤션
+  convention.py      설정 파일(.ai-gitgen.json) 읽기·검증: 커밋/PR 컨벤션 + safe-mode 정책
   records.py         불변 데이터클래스 (GitChanges, GenerationResult, CommitMessage, ...)
   git_collector.py   git status --porcelain, git diff, git diff --cached, 새 파일은 diff --no-index
-  sanitizer.py       safe-mode 마스킹·제외·제한
+  sanitizer.py       safe-mode 마스킹·제외·제한 (정책 객체 적용, 사용자 규칙 실행 시간 제한)
   prompts.py         시스템/사용자 프롬프트 템플릿, 재생성 프롬프트
   providers.py       Claude/OpenAI 요청 조립·응답 파싱·오류 번역, urllib 전송, 호출 카운터
   model_registry.py  temperature 미지원 모델 목록 (내장 + 학습), JSON 파일
   validators.py      파싱, 규칙 검증, 후처리 (컨벤션 값 적용)
   formatter.py       [INFO]/[WARN]/[ERROR]/[DONE] 로그(stderr), 구분선 블록(stdout)
   errors.py          예외 클래스
-tests/               162개 단위·통합 테스트 (API 키 불필요)
+tests/               185개 단위·통합 테스트 (API 키 불필요)
 docs/                가이드, 학습 자료, 평가 답변, 프롬프트, 결과 보고서, 보너스 보고서, conventions/ 예시
 ```
 
