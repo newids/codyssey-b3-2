@@ -8,6 +8,7 @@ Codyssey 미션 B3-2 "내가 고친 코드 설명을 AI가 대신 써주는 도�
 | 문서 | 내용 |
 | --- | --- |
 | [docs/08-bonus-1-report.md](docs/08-bonus-1-report.md) | 보너스 1: 실제 저장소에 적용한 PR 링크와 "AI 초안 → 최종 PR" 변경점 |
+| [docs/09-bonus-2-report.md](docs/09-bonus-2-report.md) | 보너스 2: B2-1 스타일 분석 → 팀 컨벤션 정의 → 설정 파일 적용 전/후 비교 |
 | [docs/01-mission-guide.md](docs/01-mission-guide.md) | 요구사항 분석, 설계, 구현 순서, 보너스 진행법, 점검표 |
 | [docs/02-learning-materials.md](docs/02-learning-materials.md) | HTTP/REST, Messages API, 파라미터, git·subprocess, 프롬프트, 검증, 보안·비용 학습 자료 |
 | [docs/03-evaluation-answers.md](docs/03-evaluation-answers.md) | 과제 목표 5문항 답변과 예상 추가 질문 |
@@ -82,6 +83,7 @@ python3 -m ai_gitgen commit --safe-mode           # 민감정보 마스킹 + 전
 python3 -m ai_gitgen pr --context "로그인 재시도 버그 수정"   # 변경 이유를 직접 제공
 python3 -m ai_gitgen commit --dry-run             # API 호출 없이 프롬프트만 확인 (비용 0)
 python3 -m ai_gitgen commit --provider openai     # OpenAI 로 생성
+python3 -m ai_gitgen pr --convention team.json    # 팀 컨벤션 설정 파일 지정 (8장)
 ```
 
 ### 옵션 (`commit`, `pr` 공통)
@@ -97,6 +99,8 @@ python3 -m ai_gitgen commit --provider openai     # OpenAI 로 생성
 | `--safe-mode` | 꺼짐 | 5장 참고 |
 | `--context` | 없음 | 변경 이유 한 줄. PR 의 Why 섹션 품질이 좋아집니다 |
 | `--dry-run` | 꺼짐 | 프롬프트만 출력, API 호출·비용 없음 |
+| `--convention` | 현재 디렉터리의 `.ai-gitgen.json` | 팀 컨벤션 설정 파일 경로. 8장 참고 |
+| `--no-convention` | 꺼짐 | 설정 파일이 있어도 기본 컨벤션 사용 (적용 전/후 비교용) |
 
 > 과제 문서는 옵션을 `-model` 처럼 적었지만, Python `argparse` 관례에 따라 `--model` 로 구현했습니다.
 
@@ -275,7 +279,42 @@ claude  reject-demo-model  학습        temperature is not supported for this..
 
 모든 400 을 기록하지는 않습니다. `max_tokens` 범위 오류 같은 400 까지 기록하면 정상 모델이 거부 목록에 들어가므로, 메시지(OpenAI 는 `param` 필드)에 `temperature` 가 명시된 경우만 기록합니다. 레지스트리 파일은 사용자별 데이터이므로 저장소에 커밋하지 않습니다. 파일이 손상되면 `[ERROR]` 로 알리며 `models reset` 으로 복구합니다.
 
-## 8. 출력 검증 규칙
+## 8. 팀 컨벤션 설정 파일 (`.ai-gitgen.json`)
+
+저장소마다 커밋 prefix, 스코프 표기, PR 섹션, 테스트 명령이 다릅니다. 저장소 루트(실행 위치)에 `.ai-gitgen.json` 을 두면 도구가 자동으로 읽어 **프롬프트 규칙**과 **출력 검증·후처리**에 함께 반영합니다. 파일이 없으면 아래 기본값으로 동작하며, 이때 프롬프트는 설정 기능이 없던 때와 완전히 같습니다.
+
+```bash
+python3 -m ai_gitgen convention init              # 기본값으로 채운 .ai-gitgen.json 생성 (있으면 덮어쓰지 않음)
+python3 -m ai_gitgen convention show              # 적용될 값과 출처 확인
+python3 -m ai_gitgen pr --convention path/to.json # 다른 위치의 파일 사용
+python3 -m ai_gitgen pr --no-convention           # 파일을 무시하고 기본값으로 (전/후 비교)
+```
+
+| 키 | 기본값 | 반영 위치 | 설명 |
+| --- | --- | --- | --- |
+| `commit.types` | `feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert` | 프롬프트 + 검증 | 허용 type. 목록 밖 type 은 형식 위반으로 1회 재생성 |
+| `commit.scope` | `optional` | 프롬프트 + 검증 + 후처리 | `forbidden` 이면 커밋·PR 제목의 `feat(search):` 를 `feat:` 으로 고침. `required` 인데 없으면 재생성 (스코프는 지어낼 수 없음) |
+| `commit.title_soft_limit` / `title_hard_limit` | `50` / `72` | 프롬프트 + 후처리 | 20~120 사이 정수, soft ≤ hard |
+| `commit.rules` | 없음 | 프롬프트 `[팀 컨벤션]` 블록 | 자유 문장 규칙. 문체, 불릿 구성 등 |
+| `pr.sections` | `Why, What, How to Test` | 프롬프트 + 검증 + 후처리 | 섹션 이름(`##` 생략 가능). 빠진 섹션은 재생성 후 `- (작성 필요)` |
+| `pr.title_limit` | `80` | 프롬프트 + 후처리 | PR 제목 최대 길이 |
+| `pr.test_command` | 없음 | 프롬프트 + 검증 + 후처리 | How to Test 에 그대로 넣을 테스트 명령. 모델이 빠뜨리면 첫 불릿으로 삽입 |
+| `pr.checklist` | 없음 | 후처리 | `## Checklist` 섹션에 `- [ ]` 항목으로 추가. 모델이 쓴 체크리스트는 팀 항목으로 교체 (`sections` 에 `Checklist` 를 같이 쓰면 오류) |
+| `pr.footer` | 없음 | 후처리 | 본문 끝에 `---` 뒤 한 줄 추가 (예: 도구 사용 표기) |
+| `pr.rules` | 없음 | 프롬프트 `[팀 컨벤션]` 블록 | 자유 문장 규칙 |
+
+모르는 키, 잘못된 타입, 비어 있거나 중복된 `types`/`sections`, 범위 밖 숫자, 여러 줄 푸터는 키 이름을 포함한 `[ERROR]` 로 거부하고 API 를 호출하지 않습니다. 설정 파일은 저장소 안에 있으므로 `rules` 는 프롬프트에 그대로 들어갑니다. 남의 저장소를 받아 실행할 때는 `[INFO] 컨벤션 적용:` 로그로 어떤 파일이 읽혔는지 확인하거나 `--no-convention` 을 쓰세요 (규칙은 최대 20개, 각 300자로 제한).
+
+B2-1 용돈 기입장 저장소를 분석해 만든 실제 예시가 [docs/conventions/codyssey-b2-1.ai-gitgen.json](docs/conventions/codyssey-b2-1.ai-gitgen.json) 에 있습니다 (스코프 금지, 6개 type, unittest 명령, 존댓말 불릿, 체크리스트 3개, 도구 표기 푸터). 같은 diff 로 적용 전/후를 비교하면 다음과 같습니다. 전체 비교는 [docs/09-bonus-2-report.md](docs/09-bonus-2-report.md) 5장.
+
+| | 적용 전 | 적용 후 |
+| --- | --- | --- |
+| 커밋 제목 | `feat(search): 금액 범위 필터 옵션 추가 (--min-amount, --max-amount)` | `feat: search 명령에 금액 범위 옵션 추가` |
+| 커밋 불릿 | `models.py의 SearchCriteria에 …`, README 누락 | `models.py 의 SearchCriteria 에 …`, README 불릿 포함 |
+| PR How to Test | `python -m pytest tests/test_cli.py::…` (저장소에 pytest 없음) | `python -m unittest discover -s tests -t .` + `python -m unittest tests.…` |
+| PR 본문 | Why/What/How to Test 만 | + `## Checklist` 3항목 + 도구 표기 푸터 (후처리, 토큰 비용 없음) |
+
+## 9. 출력 검증 규칙
 
 | 대상 | 규칙 | 위반 시 |
 | --- | --- | --- |
@@ -283,28 +322,30 @@ claude  reject-demo-model  학습        temperature is not supported for this..
 | 커밋 본문 | `- ` 불릿 | 불릿 아닌 줄을 불릿으로 변환 (후처리) |
 | PR 제목 | 80자 최대 | 절단 (후처리) |
 | PR 본문 | `## Why`, `## What`, `## How to Test` 헤더 + 각 1개 이상 불릿 | 1회 재생성 → 그래도 실패면 `- (작성 필요)` 로 채우고 `[WARN]` |
+| 컨벤션 (8장) | 허용 type, 스코프 정책, 길이, 섹션 목록이 설정 파일 값으로 바뀜 | 스코프 금지 위반은 후처리로 제거, 스코프 필수 누락·목록 밖 type 은 재생성 |
 
-## 9. 프로젝트 구조
+## 10. 프로젝트 구조
 
 ```text
 ai_gitgen/
   cli.py             옵션 해석, 최상위 예외 처리, 종료 코드
-  commands.py        commit / pr / models 실행 흐름, 호출 횟수 제한
+  commands.py        commit / pr / models / convention 실행 흐름, 호출 횟수 제한
   config.py          기본값 상수, 환경변수
+  convention.py      팀 컨벤션 설정 파일(.ai-gitgen.json) 읽기·검증, 기본 컨벤션
   records.py         불변 데이터클래스 (GitChanges, GenerationResult, CommitMessage, ...)
   git_collector.py   git status --porcelain, git diff, git diff --cached, 새 파일은 diff --no-index
   sanitizer.py       safe-mode 마스킹·제외·제한
   prompts.py         시스템/사용자 프롬프트 템플릿, 재생성 프롬프트
   providers.py       Claude/OpenAI 요청 조립·응답 파싱·오류 번역, urllib 전송, 호출 카운터
   model_registry.py  temperature 미지원 모델 목록 (내장 + 학습), JSON 파일
-  validators.py      파싱, 규칙 검증, 후처리
+  validators.py      파싱, 규칙 검증, 후처리 (컨벤션 값 적용)
   formatter.py       [INFO]/[WARN]/[ERROR]/[DONE] 로그(stderr), 구분선 블록(stdout)
   errors.py          예외 클래스
-tests/               129개 단위·통합 테스트 (API 키 불필요)
-docs/                가이드, 학습 자료, 평가 답변, 프롬프트, 결과 보고서
+tests/               162개 단위·통합 테스트 (API 키 불필요)
+docs/                가이드, 학습 자료, 평가 답변, 프롬프트, 결과 보고서, 보너스 보고서, conventions/ 예시
 ```
 
-## 10. 테스트
+## 11. 테스트
 
 ```bash
 python3 -m unittest discover -s tests -t . -v        # 표준 라이브러리만으로 실행
@@ -312,7 +353,7 @@ python3 -m unittest discover -s tests -t . -v        # 표준 라이브러리만
 
 API 키 없이 실행됩니다. HTTP 전송은 mock 으로, AI 클라이언트는 응답 큐를 가진 가짜 객체로 바꿔 검증하고, git 수집은 임시 디렉터리에 실제 `git init` 을 합니다. 커버리지(pytest-cov 기준) 98%.
 
-## 11. 설계 결정
+## 12. 설계 결정
 
 - **표준 라이브러리 `urllib` 로 직접 REST 호출.** 과제 목표가 "REST API 연동 흐름 설명"이므로 헤더·본문·상태 코드를 직접 다룹니다. SDK 로 바꾸려면 `providers.py` 만 교체하면 됩니다.
 - **기본 모델 `claude-sonnet-4-6`.** 과제가 요구하는 `--temperature` 옵션을 실제로 받아 주는 모델 중 품질·비용 균형이 좋습니다. 최신 모델은 `temperature` 를 거부하므로 7장의 레지스트리로 처리합니다.

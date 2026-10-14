@@ -10,6 +10,7 @@
 | 2. GitHub 리포지토리 | 완료. 공개 저장소, 커밋 5개(과제 원문 → 문서 → 구현 → 테스트 → README) | <https://github.com/newids/codyssey-b3-2> |
 | 3. 사용 가이드 README | 완료. 설치, 환경변수, 사용 예시, 출력 예시, 민감정보 대응, 비용/요청 제한 | `README.md` |
 | 보너스 1. 실제 저장소 PR | 완료. B2-1 에 금액 범위 검색 기능 PR, AI 초안 → 최종 변경점 7개 | [08-bonus-1-report.md](08-bonus-1-report.md), <https://github.com/newids/codyssey-b2-1/pull/1> |
+| 보너스 2. 컨벤션 커스터마이징 | 완료. B2-1 스타일 분석 → `.ai-gitgen.json` 설정 파일(프롬프트·검증·후처리 반영) → 같은 diff 로 적용 전/후 비교 | [09-bonus-2-report.md](09-bonus-2-report.md), `ai_gitgen/convention.py`, `docs/conventions/` |
 
 ## 2. 기능 요구사항 대응
 
@@ -81,11 +82,11 @@ safe-mode ON/OFF 비교(`--dry-run` 의 `<diff>` 부분):
 
 ```text
 $ python3 -m unittest discover -s tests -t .
-Ran 129 tests in 4.2s
+Ran 162 tests in 3.3s
 OK
 ```
 
-보너스 1 수행 중 추가한 기능(`pr` 의 브랜치 diff 수집, `--base`, `--fast`, `AI_API_URL`/`AI_API_MODEL`/`AI_SMALL_FAST_MODEL`)에 테스트 14개를 더해 115개에서 129개가 되었습니다. 전체 커버리지는 985 문장 중 19 미실행으로 98% 를 유지합니다. 아래 모듈별 표는 115개 시점의 측정값입니다.
+보너스 1 수행 중 추가한 기능(`pr` 의 브랜치 diff 수집, `--base`, `--fast`, `AI_API_URL`/`AI_API_MODEL`/`AI_SMALL_FAST_MODEL`)에 테스트 14개, 보너스 2 의 컨벤션 설정 파일(`convention.py`, 프롬프트·검증·CLI 반영, 코드 리뷰 반영분 포함)에 33개를 더해 115개에서 162개가 되었습니다. 전체 커버리지는 1,264 문장 중 20 미실행으로 98% 를 유지합니다(`convention.py` 99%, `validators.py` 99%, `cli.py` 100%). 아래 모듈별 표는 115개 시점의 측정값입니다.
 
 커버리지 (`pytest --cov=ai_gitgen`, 외부 도구로 측정):
 
@@ -137,6 +138,7 @@ OK
 ## 7. 한계와 다음 단계
 
 - **temperature 실험 미수행.** 실제 생성은 2회(0.3)만 했으므로 학습 자료 3절의 temperature 실험(0.0 / 0.5 / 1.0 × 3회)은 아직 없고, 평가 답변 Q2 의 표는 예상치입니다. 프록시가 연결되어 있으므로 바로 수행할 수 있습니다.
-- **보너스 2·3 미수행.** 컨벤션 설정 파일(보너스 2)과 safe-mode 규칙 확장(보너스 3)은 가이드 5장의 절차대로 진행할 수 있습니다. 토대(제공자별 내장 목록, `AI_API_URL`, `--base`)는 마련되어 있습니다.
+- **보너스 3 미수행.** safe-mode 마스킹 규칙 확장과 전송량 상한 옵션은 가이드 5장의 절차대로 진행할 수 있습니다. 보너스 2 의 설정 파일 읽기·검증 구조(`convention.py`)에 `safe_mode` 섹션을 더하는 방식이 자연스럽습니다.
+- **컨벤션은 강제가 아니다.** 설정 파일 규칙을 넣어도 모델이 항상 따르지는 않습니다(보너스 2 보고서 6장: PR What 에 테스트 변경 누락). 후처리로 고칠 수 있는 것(스코프, 체크리스트, 푸터)만 확정적으로 보장합니다.
 - **마스킹의 한계.** 정규식은 알려진 형태만 잡습니다. README 5장에 명시했습니다.
 - **재시도 없음.** 429/5xx 에 자동 재시도를 하지 않고 안내만 합니다. 호출 횟수 제한을 명확히 지키기 위한 선택이며, 운영 환경이라면 SDK 의 재시도를 쓰는 편이 낫습니다.

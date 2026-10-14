@@ -667,18 +667,21 @@ gh repo create codyssey-b3-2 --public --source . --push
 
 ### 보너스 2. 컨벤션 커스터마이징
 
-1. 대상 저장소의 `git log --oneline -30` 을 보고 prefix 사용 빈도, 스코프 표기, 언어를 표로 정리한다.
-2. `.ai-gitgen.yml` 또는 `.ai-gitgen.json` 을 설계한다 (표준 라이브러리만 쓰려면 JSON이 편합니다).
+1. 대상 저장소의 `git log --format=%B` 와 기존 PR 본문을 보고 prefix 사용, 스코프 표기, 제목·불릿 문체, 테스트 명령, PR 섹션을 표로 정리한다. 보너스 1 에서 "AI 초안을 손으로 고친 항목"이 있으면 그것이 가장 좋은 규칙 후보다.
+2. `.ai-gitgen.json` 을 설계한다 (표준 라이브러리만 쓰므로 JSON). 이 저장소의 실제 구현 스키마:
 
 ```json
 {
-  "commit": {"types": ["feat", "fix", "docs", "test", "refactor", "chore"], "scope": "required", "language": "ko"},
-  "pr": {"sections": ["## Why", "## What", "## How to Test", "## Checklist"], "tone": "formal"}
+  "commit": {"types": ["feat", "fix", "docs", "test", "refactor", "chore"], "scope": "forbidden",
+             "title_soft_limit": 50, "title_hard_limit": 72, "rules": ["파일 이름 뒤 조사는 띄어 쓴다"]},
+  "pr": {"sections": ["Why", "What", "How to Test"], "test_command": "python -m unittest discover -s tests -t .",
+         "checklist": ["전체 테스트 통과"], "footer": "초안은 ai-gitgen 으로 생성", "rules": ["불릿은 존댓말 종결"]}
 }
 ```
 
-3. `prompts.py` 가 설정 파일을 읽어 규칙 문장을 치환하도록 한다. 설정 파일이 없으면 기본 템플릿.
-4. **증빙:** 컨벤션 문서(README 섹션) + 같은 diff로 설정 전/후 생성 결과 비교.
+3. 반영 지점을 둘로 나눈다. **AI 가 판단해야 하는 것**(type 목록, 스코프 형식, 문체, 테스트 명령)은 `prompts.py` 가 설정값으로 규칙 문장을 치환하고, **고정 텍스트**(스코프 제거, 체크리스트, 푸터)는 `validators.py` 후처리로 붙여 토큰을 쓰지 않는다. 검증도 같은 값을 쓰게 해서 "프롬프트는 금지했는데 검증은 통과"하는 불일치를 막는다.
+4. 설정 파일이 없을 때 프롬프트가 이전과 바이트 단위로 같은지 테스트로 고정한다. 모르는 키·잘못된 타입은 API 호출 전에 키 이름을 포함한 오류로 거부한다.
+5. **증빙:** 컨벤션 문서(README 섹션) + 같은 diff 로 `--no-convention` / `--convention` 생성 결과 비교. 실제 수행 결과는 [09-bonus-2-report.md](09-bonus-2-report.md).
 
 ### 보너스 3. 안전 모드 고도화
 
