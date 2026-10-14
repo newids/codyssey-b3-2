@@ -8,7 +8,7 @@
 #
 # 하는 일:
 #   1. B2-1 을 임시 디렉터리에 클론한다 (실제 저장소는 건드리지 않는다).
-#   2. PR #1 이전 커밋(4e293a6)에 브랜치를 만들고 .ai-gitgen.json(46a991c)만 커밋한다.
+#   2. PR #1 이전 커밋(4e293a6)에 브랜치를 만들고 .ai-gitgen.json(기본: main 의 최신본)만 커밋한다.
 #   3. PR #1 의 변경(4e293a6..f0b1357)을 스테이징 상태로 올린다.
 #      -> "컨벤션 파일은 추적 중이고 diff 에는 없음 + PR 변경 6개 파일 143줄 스테이징" 상태가 된다.
 #   4. commit --dry-run 으로 [팀 컨벤션] 블록을 확인하고, 실제 호출로 컨벤션 적용/미적용 출력을 비교한다.
@@ -21,7 +21,7 @@ TOOL_ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # 이 저장소(codyssey-b3-2) �
 
 BEFORE_PR="4e293a6"      # PR #1 이전 커밋 (budget_app 최초 구현)
 PR_HEAD="f0b1357"        # PR #1 의 커밋
-CONVENTION_COMMIT="46a991c"  # .ai-gitgen.json 을 추가한 커밋
+CONVENTION_REF="${CONVENTION_REF:-main}"  # .ai-gitgen.json 을 가져올 ref. 기본은 최신 main (처음 추가된 커밋은 46a991c)
 
 OUT="$WORK-out"   # 출력은 클론 밖에 둔다. 클론 안에 쓰면 새 파일로 수집되어 diff 가 오염된다
 
@@ -37,7 +37,7 @@ cd "$WORK"
 
 echo "== 2. PR 이전 커밋에 컨벤션 파일만 커밋"
 git checkout -q -b convention-check "$BEFORE_PR"
-git checkout "$CONVENTION_COMMIT" -- .ai-gitgen.json
+git checkout "$CONVENTION_REF" -- .ai-gitgen.json
 git -c user.name=check -c user.email=check@example.com commit -q -m "chore: 컨벤션 파일 (재현용, 푸시하지 않음)"
 
 echo "== 3. PR #1 변경을 스테이징으로 올림"

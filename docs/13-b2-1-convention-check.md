@@ -25,7 +25,7 @@ B2-1 의 `main` 은 PR #1 이 머지되어 깨끗하므로, 그대로 실행하�
 | --- | --- | --- |
 | 1 | `git clone <B2-1> <WORK>` | 실제 저장소를 더럽히지 않기 위해 |
 | 2 | `git checkout -b convention-check 4e293a6` | PR #1 **이전** 커밋(budget_app 최초 구현)으로 |
-| 3 | `git checkout 46a991c -- .ai-gitgen.json` 후 커밋 | 컨벤션 파일을 **추적 상태**로 만든다. 커밋하지 않으면 `??` 새 파일로 수집되어 diff 에 섞인다 |
+| 3 | `git checkout main -- .ai-gitgen.json` 후 커밋 (`CONVENTION_REF` 로 다른 ref 지정 가능) | 최신 컨벤션 파일을 **추적 상태**로 만든다. 커밋하지 않으면 `??` 새 파일로 수집되어 diff 에 섞인다 |
 | 4 | `git diff 4e293a6 f0b1357 \| git apply --index` | PR #1 의 변경 6개 파일 143줄을 스테이징으로 올린다 |
 | 5 | `commit --safe-mode --dry-run` | 프롬프트에 `[팀 컨벤션]` 블록이 들어가는지 확인 (호출 없음) |
 | 6 | `commit --safe-mode` | 컨벤션 적용 결과 |
@@ -34,7 +34,7 @@ B2-1 의 `main` 은 PR #1 이 머지되어 깨끗하므로, 그대로 실행하�
 | 9 | `pr --safe-mode --base base-check --context "..."` | PR 컨벤션 적용 결과. `--context` 는 보너스 1·2 와 같은 문구 |
 | 10 | 같은 명령 + `--no-convention` | 기본 컨벤션 결과 (비교용) |
 
-커밋 해시: `4e293a6` PR 이전, `f0b1357` PR #1 의 커밋, `59d163a` 머지 커밋, `46a991c` 컨벤션 파일 추가.
+커밋 해시: `4e293a6` PR 이전, `f0b1357` PR #1 의 커밋, `59d163a` 머지 커밋, `46a991c` 컨벤션 파일 추가, `c51fddd` `pr.rules` 에 테스트 변경 규칙 추가. 3.6~3.8 은 `46a991c` 시점(`CONVENTION_REF=46a991c`), 3.9 는 `c51fddd` 시점의 결과입니다.
 
 ### 처음에 실패한 방법 두 가지
 
@@ -198,6 +198,20 @@ feat(search): 금액 범위 필터 옵션(--min-amount, --max-amount) 추가
 | `pr.footer` | 없음 | `---` 뒤 도구 표기 한 줄 | 후처리 |
 
 입력 토큰은 313개(3,794 → 4,107) 늘었고, 출력은 규칙대로 불릿이 늘어 530 → 664 입니다. 보너스 1 에서 AI 초안을 손으로 고친 7곳 중 스코프·pytest→unittest·전제 조건·도구 표기가 이번에도 자동으로 해결되었고, 보너스 2 보고서 5장과 같은 결과입니다.
+
+### 3.9 `pr.rules` 에 테스트 변경 규칙을 추가한 뒤 (`c51fddd`)
+
+B2-1 루트 파일에 다섯 번째 PR 규칙 "테스트를 바꿨으면 What 에 `tests/test_cli.py` 처럼 테스트 파일 경로와 추가한 케이스 이름을 불릿 하나로 적는다" 을 추가하고 스크립트를 다시 실행했습니다. What 이 다음과 같이 바뀌었습니다(입력 4,174 · 출력 751).
+
+```text
+## What
+- `budget_app/models.py`의 `SearchCriteria`에 `min_amount`, `max_amount` 필드를 추가하고, `matches()` 메서드에 양 끝 포함 금액 범위 필터 로직을 구현했습니다.
+- `budget_app/models.py`의 `SearchCriteria.__post_init__`에 `min_amount > max_amount`일 때 `ValidationError`를 발생시키는 유효성 검사를 추가했습니다.
+- `budget_app/cli.py`에 `--min-amount`, `--max-amount` 인자를 등록하고, `budget_app/commands.py`의 `cmd_search`에서 `parse_amount`로 파싱하여 `SearchCriteria`에 전달하도록 했습니다.
+- `tests/test_cli.py`에 `test_search_by_amount_range`, `tests/test_services.py`에 `test_search_filters_by_amount_range_inclusive` 및 `test_search_rejects_min_amount_greater_than_max` 케이스를 추가했습니다.
+```
+
+테스트 불릿은 규칙대로 들어왔지만 README 불릿이 빠졌습니다. 해석과 다음 조정은 보너스 2 보고서 8.5 절에 있습니다. `--no-convention` 결과는 이전과 같았습니다.
 
 ## 4. 정리 후
 
