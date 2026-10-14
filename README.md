@@ -12,6 +12,7 @@ Codyssey 미션 B3-2 "내가 고친 코드 설명을 AI가 대신 써주는 도�
 | [docs/10-bonus-3-report.md](docs/10-bonus-3-report.md) | 보너스 3: safe-mode 정책(숫자 기준), 정규식 규칙 확장, ON/OFF 비교, 보안 리뷰 반영 |
 | [docs/11-temperature-experiment.md](docs/11-temperature-experiment.md) | temperature 0.0 / 0.5 / 1.0 × 3회 실험 원문과 해석 |
 | [docs/12-pre-evaluation-feedback.md](docs/12-pre-evaluation-feedback.md) | AI 사전평가(16항목, 10 통과) 지적 사항과 반영 내역, 재검증 방법 |
+| [docs/13-b2-1-convention-check.md](docs/13-b2-1-convention-check.md) | B2-1 루트의 `.ai-gitgen.json` 자동 적용 재현 절차(`scripts/b2-1-convention-check.sh`)와 적용/미적용 비교 |
 | [docs/01-mission-guide.md](docs/01-mission-guide.md) | 요구사항 분석, 설계, 구현 순서, 보너스 진행법, 점검표 |
 | [docs/02-learning-materials.md](docs/02-learning-materials.md) | HTTP/REST, Messages API, 파라미터, git·subprocess, 프롬프트, 검증, 보안·비용 학습 자료 |
 | [docs/03-evaluation-answers.md](docs/03-evaluation-answers.md) | 과제 목표 5문항 답변과 예상 추가 질문 |
@@ -451,7 +452,7 @@ python3 -m ai_gitgen pr --no-convention           # 파일을 무시하고 기�
 
 모르는 키, 잘못된 타입, 비어 있거나 중복된 `types`/`sections`, 범위 밖 숫자, 여러 줄 푸터는 키 이름을 포함한 `[ERROR]` 로 거부하고 API 를 호출하지 않습니다. 설정 파일은 저장소 안에 있으므로 `rules` 는 프롬프트에 그대로 들어갑니다. 남의 저장소를 받아 실행할 때는 `[INFO] 컨벤션 적용:` 로그로 어떤 파일이 읽혔는지 확인하거나 `--no-convention` 을 쓰세요 (규칙은 최대 20개, 각 300자로 제한).
 
-B2-1 용돈 기입장 저장소를 분석해 만든 실제 예시가 [docs/conventions/codyssey-b2-1.ai-gitgen.json](docs/conventions/codyssey-b2-1.ai-gitgen.json) 에 있습니다 (스코프 금지, 6개 type, unittest 명령, 존댓말 불릿, 체크리스트 3개, 도구 표기 푸터). 같은 diff 로 적용 전/후를 비교하면 다음과 같습니다. 전체 비교는 [docs/09-bonus-2-report.md](docs/09-bonus-2-report.md) 5장.
+B2-1 용돈 기입장 저장소를 분석해 만든 실제 예시가 [docs/conventions/codyssey-b2-1.ai-gitgen.json](docs/conventions/codyssey-b2-1.ai-gitgen.json) 에 있습니다 (스코프 금지, 6개 type, unittest 명령, 존댓말 불릿, 체크리스트 3개, 도구 표기 푸터). 같은 diff 로 적용 전/후를 비교하면 다음과 같습니다. 전체 비교는 [docs/09-bonus-2-report.md](docs/09-bonus-2-report.md) 5장. 같은 파일을 B2-1 루트에 넣어 옵션 없이 자동 적용되는 것을 확인한 절차는 [docs/13](docs/13-b2-1-convention-check.md) 과 `scripts/b2-1-convention-check.sh` 에 있습니다.
 
 | | 적용 전 | 적용 후 |
 | --- | --- | --- |
@@ -491,6 +492,7 @@ ai_gitgen/
   errors.py          예외 클래스
 tests/               204개 단위·통합 테스트 (API 키 불필요)
 docs/                가이드, 학습 자료, 평가 답변, 프롬프트, 결과 보고서, 보너스 보고서, conventions/ 예시
+scripts/             b2-1-convention-check.sh: B2-1 에서 컨벤션 자동 적용을 재현하는 스크립트 (docs/13)
 ```
 
 ### 수집 → 호출 → 후처리의 경계와 테스트 지점

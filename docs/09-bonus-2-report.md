@@ -10,6 +10,7 @@
 | 컨벤션 문서 | 이 문서 2~3장과 [README 8장](../README.md#8-팀-컨벤션-설정-파일-ai-gitgenjson) |
 | 반영 방법 (구현) | ① 설정 파일 `.ai-gitgen.json` 자동 탐색 + `--convention PATH` / `--no-convention` 옵션 ② 프롬프트 규칙 치환 ③ 출력 검증·후처리 규칙 치환 (스코프 제거, 체크리스트·푸터 추가) |
 | 컨벤션 파일 | [docs/conventions/codyssey-b2-1.ai-gitgen.json](conventions/codyssey-b2-1.ai-gitgen.json) |
+| B2-1 루트 적용 | PR #1 머지 후 같은 파일을 B2-1 루트에 `.ai-gitgen.json` 으로 커밋(`46a991c`, 2026-10-14). `--convention` 없이 자동 적용되는 것을 [13-b2-1-convention-check.md](13-b2-1-convention-check.md) 에서 재현 |
 | 적용 전/후 비교 | 5장. 같은 diff(B2-1 `feature/search-amount-range`, 143줄)로 커밋 메시지 1쌍 + PR 초안 1쌍, 수업용 프록시의 `claude-sonnet-4`, temperature 0.3 |
 | 테스트 | 33개 추가 → 전체 162개, 커버리지 98% |
 
