@@ -17,6 +17,10 @@ EXIT_CODE_HELP = (
 )
 
 
+def _model_defaults(models: dict[str, str]) -> str:
+    return " / ".join(f"{provider} {model}" for provider, model in models.items())
+
+
 def _add_generation_options(parser: argparse.ArgumentParser, kind: str) -> None:
     parser.add_argument(
         "--provider",
@@ -28,22 +32,22 @@ def _add_generation_options(parser: argparse.ArgumentParser, kind: str) -> None:
         "--model",
         default=None,
         help=(
-            f"모델 ID (기본: 환경변수 {config.MODEL_ENV}, 없으면 claude {config.DEFAULT_MODELS['claude']} / openai {config.DEFAULT_MODELS['openai']}). "
+            f"모델 ID (기본: 환경변수 {config.MODEL_ENV}, 없으면 {_model_defaults(config.DEFAULT_MODELS)}). "
             "같은 diff 를 다른 모델로 돌려 품질·비용을 비교하거나, 재현을 위해 모델을 고정할 때 지정"
         ),
     )
     parser.add_argument(
         "--fast",
         action="store_true",
-        help=f"작고 빠른 모델 사용 (환경변수 {config.FAST_MODEL_ENV}, 없으면 claude {config.FAST_MODELS['claude']} / openai {config.FAST_MODELS['openai']})",
+        help=f"작고 빠른 모델 사용 (환경변수 {config.FAST_MODEL_ENV}, 없으면 {_model_defaults(config.FAST_MODELS)})",
     )
     parser.add_argument(
         "--temperature",
         type=float,
-        default=config.DEFAULT_TEMPERATURE,
+        default=None,
         help=(
-            f"0.0~1.0 (기본: {config.DEFAULT_TEMPERATURE}). 낮을수록 같은 diff 에 거의 같은 결과(재현성), "
-            "높을수록 표기·분량이 흔들림. 실험·비교 목적으로만 올리세요"
+            f"0.0~1.0 (기본: {config.DEFAULT_TEMPERATURE}, gemini 는 생략해 모델 기본값 1.0 사용). "
+            "낮을수록 같은 diff 에 거의 같은 결과(재현성), 높을수록 표기·분량이 흔들림. 실험·비교 목적으로만 바꾸세요"
         ),
     )
     parser.add_argument(

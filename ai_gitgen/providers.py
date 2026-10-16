@@ -5,8 +5,9 @@ from __future__ import annotations
 import http.client
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 TEMPERATURE_REJECTION_HINTS = ("support", "allow", "deprecat", "remov", "invalid", "unexpected", "unknown", "not ")
@@ -19,8 +20,8 @@ from .records import GenerationResult, GenerationSettings
 @dataclass(frozen=True)
 class PreparedRequest:
     url: str
-    headers: dict[str, str]
-    body: dict[str, object]
+    headers: dict[str, str] = field(repr=False)  # API 키가 들어 있으므로 디버그 출력에 찍히지 않게
+    body: dict[str, object] = field(repr=False)
 
 
 class Provider(Protocol):
@@ -170,7 +171,94 @@ class OpenAIProvider:
         return _compose_error(status, message, _hint_for_status(status))
 
 
-PROVIDERS: dict[str, Provider] = {"claude": ClaudeProvider(), "openai": OpenAIProvider()}
+class GeminiProvider:
+    """Google Gemini API (generateContent). 키는 쿼리 문자열이 아니라 헤더로 보내 URL 로그에 남지 않게 한다."""
+
+    name = "gemini"
+    base_url = "https://generativelanguage.googleapis.com"  # 경로에 모델 ID 가 들어가므로 기본 주소만 둔다
+    finish_reason_map = {
+        "STOP": "end_turn",
+        "MAX_TOKENS": "max_tokens",
+        "SAFETY": "refusal",
+        "RECITATION": "refusal",
+        "BLOCKLIST": "refusal",
+        "PROHIBITED_CONTENT": "refusal",
+        "SPII": "refusal",
+        "IMAGE_SAFETY": "refusal",
+        "IMAGE_PROHIBITED_CONTENT": "refusal",
+        "LANGUAGE": "refusal",
+    }
+    MODELS_PREFIX = "models/"
+
+    @classmethod
+    def endpoint_path(cls, model: str) -> str:
+        """`models/` 접두는 벗기고, 나머지는 URL 인코딩한다 (`/`, `?`, `#` 가 경로를 바꾸지 못하게)."""
+        name = model[len(cls.MODELS_PREFIX):] if model.startswith(cls.MODELS_PREFIX) else model
+        return f"/v1beta/models/{urllib.parse.quote(name, safe='-._')}:generateContent"
+
+    @staticmethod
+    def uses_thinking_level(model: str) -> bool:
+        bare = model.lower().rsplit("/", 1)[-1]
+        return bare.startswith(config.GEMINI_THINKING_LEVEL_PREFIXES)
+
+    def prepare(self, system: str, user: str, settings: GenerationSettings, api_key: str) -> PreparedRequest:
+        generation: dict[str, object] = {"maxOutputTokens": settings.max_tokens}
+        if settings.temperature is not None:
+            generation["temperature"] = settings.temperature
+        if self.uses_thinking_level(settings.model):
+            generation["thinkingConfig"] = {"thinkingLevel": config.GEMINI_THINKING_LEVEL}
+        body: dict[str, object] = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": generation,
+        }
+        headers = {"content-type": "application/json", "x-goog-api-key": api_key}
+        path = self.endpoint_path(settings.model)
+        return PreparedRequest(config.endpoint(self.base_url + path, path), headers, body)
+
+    @staticmethod
+    def _answer_text(candidate: dict) -> str:
+        """사고(thought) 조각을 빼고 문자열 text 만 이어 붙인다. null·숫자 같은 값은 무시한다."""
+        content = candidate.get("content")
+        raw_parts = content.get("parts") if isinstance(content, dict) else None
+        parts = raw_parts if isinstance(raw_parts, list) else []
+        return "".join(
+            p["text"] for p in parts if isinstance(p, dict) and isinstance(p.get("text"), str) and not p.get("thought")
+        )
+
+    def parse(self, payload: dict) -> GenerationResult:
+        raw_candidates = payload.get("candidates")
+        has_candidate = isinstance(raw_candidates, list) and bool(raw_candidates) and isinstance(raw_candidates[0], dict)
+        first: dict = raw_candidates[0] if has_candidate else {}
+        finish = str(first.get("finishReason") or "")
+        feedback = payload.get("promptFeedback")
+        if not first and isinstance(feedback, dict) and feedback.get("blockReason"):
+            finish = "SAFETY"  # 입력 자체가 차단되면 candidates 가 비고 promptFeedback 만 온다
+        raw_usage = payload.get("usageMetadata")
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
+        return GenerationResult(
+            text=self._answer_text(first),
+            input_tokens=_as_int(usage.get("promptTokenCount")),
+            # 사고 토큰도 출력 상한과 과금에 포함되므로 함께 센다
+            output_tokens=_as_int(usage.get("candidatesTokenCount")) + _as_int(usage.get("thoughtsTokenCount")),
+            stop_reason=self.finish_reason_map.get(finish, finish.lower()),
+        )
+
+    def translate_error(self, status: int, payload: dict, model: str) -> AIRequestError:
+        detail = _error_detail(payload)
+        message = str(detail.get("message") or "")
+        status_name = str(detail.get("status") or "")
+        if status == 400 and is_temperature_rejection(message):
+            return UnsupportedParameterError(model=model, parameter="temperature", reason=message)
+        shown = f"{message} [{status_name}]" if status_name else message
+        if status in (400, 401, 403) and "api key" in message.lower():
+            return _compose_error(status, shown, "AI_API_KEY(또는 GEMINI_API_KEY) 값과 환경변수 이름을 확인하세요.")
+        if status == 429:
+            return _compose_error(status, shown, "요청 한도 또는 무료 할당량을 넘었습니다. 잠시 후 다시 시도하거나 결제 설정을 확인하세요.")
+        return _compose_error(status, shown, _hint_for_status(status))
+
+
+PROVIDERS: dict[str, Provider] = {"claude": ClaudeProvider(), "openai": OpenAIProvider(), "gemini": GeminiProvider()}
 
 
 def get_provider(name: str) -> Provider:
@@ -220,6 +308,8 @@ def _read_json(raw: bytes) -> dict:
         parsed = json.loads(raw.decode("utf-8", errors="replace"))
     except json.JSONDecodeError:
         return {"error": {"message": raw.decode("utf-8", errors="replace")[:200]}}
+    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+        return parsed[0]  # Gemini 는 오류를 한 원소짜리 배열로 돌려주기도 한다
     return parsed if isinstance(parsed, dict) else {}
 
 

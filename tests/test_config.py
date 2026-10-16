@@ -10,7 +10,7 @@ class ResolveApiKeyTest(unittest.TestCase):
     def setUp(self) -> None:
         self._env = mock.patch.dict(os.environ, {}, clear=False)
         self._env.start()
-        for name in ("AI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        for name in ("AI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
             os.environ.pop(name, None)
 
     def tearDown(self) -> None:
@@ -40,6 +40,13 @@ class ResolveApiKeyTest(unittest.TestCase):
         self.assertIn("AI_API_KEY 환경변수가 설정되지 않았습니다", message)
         self.assertIn("(또는 OPENAI_API_KEY)", message)
         self.assertIn("--dry-run", message)
+
+    def test_gemini_reads_its_own_provider_variable(self) -> None:
+        os.environ["GEMINI_API_KEY"] = "g-key"
+        credential = config.resolve_api_key("gemini")
+        self.assertEqual((credential.key, credential.env_name), ("g-key", "GEMINI_API_KEY"))
+        self.assertEqual(config.resolve_model("gemini", None, False), "gemini-3.8-flash")
+        self.assertEqual(config.resolve_model("gemini", None, True), "gemini-3.5-flash-lite")
 
     def test_exit_codes_are_distinct(self) -> None:
         codes = (config.EXIT_OK, config.EXIT_ERROR, config.EXIT_USAGE, config.EXIT_NO_CHANGES, config.EXIT_INTERRUPTED)

@@ -63,11 +63,11 @@ $ echo $?
 | 환경변수 | 용도 | 기본값 |
 | --- | --- | --- |
 | `AI_API_KEY` | API 키. 제공자와 무관하게 우선 사용 | 필수 |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | `AI_API_KEY` 가 없을 때 제공자별로 읽음 | 없음 |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | `AI_API_KEY` 가 없을 때 제공자별로 읽음 | 없음 |
 | `AI_API_URL` | 프록시 주소. 설정하면 그 아래 `/v1/...` 경로로 요청 (https 만 허용, 로컬은 http 가능) | 공식 API 주소 |
 | `AI_API_MODEL` | 기본 모델 덮어쓰기 | 제공자별 기본값 |
-| `AI_SMALL_FAST_MODEL` | `--fast` 옵션이 쓰는 작고 빠른 모델 | claude `claude-haiku-4-5` / openai `gpt-4.1-nano` |
-| `AI_PROVIDER` | 요청 형식 (`claude` = Messages API, `openai` = Chat Completions) | `AI_API_URL` 이 있으면 `openai`, 없으면 `claude` |
+| `AI_SMALL_FAST_MODEL` | `--fast` 옵션이 쓰는 작고 빠른 모델 | claude `claude-haiku-4-5` / openai `gpt-4.1-nano` / gemini `gemini-3.5-flash-lite` |
+| `AI_PROVIDER` | 요청 형식 (`claude` = Messages API, `openai` = Chat Completions, `gemini` = generateContent) | `AI_API_URL` 이 있으면 `openai`, 없으면 `claude` |
 | `AI_GITGEN_HOME` | 모델 레지스트리 파일 위치 | `~/.ai-gitgen/` |
 
 예: 수업용 프록시(OpenAI 호환 형식)를 쓰는 설정
@@ -99,6 +99,7 @@ python3 -m ai_gitgen commit --safe-mode           # 민감정보 마스킹 + 전
 python3 -m ai_gitgen pr --context "로그인 재시도 버그 수정"   # 변경 이유를 직접 제공
 python3 -m ai_gitgen commit --dry-run             # API 호출 없이 프롬프트만 확인 (비용 0)
 python3 -m ai_gitgen commit --provider openai     # OpenAI 로 생성
+python3 -m ai_gitgen commit --provider gemini     # Google Gemini 로 생성 (GEMINI_API_KEY 또는 AI_API_KEY)
 python3 -m ai_gitgen pr --convention team.json    # 팀 컨벤션 설정 파일 지정 (8장)
 ```
 
@@ -106,11 +107,11 @@ python3 -m ai_gitgen pr --convention team.json    # 팀 컨벤션 설정 파일 
 
 | 옵션 | 기본값 | 설명 |
 | --- | --- | --- |
-| `--provider` | `claude` (`AI_API_URL` 설정 시 `openai`) | 요청 형식 `claude` 또는 `openai` |
-| `--model` | `AI_API_MODEL`, 없으면 claude `claude-sonnet-4-6` / openai `gpt-4.1-mini` | 모델 ID. 품질·비용 비교나 재현을 위해 고정할 때 지정 (아래 "옵션을 둔 이유") |
+| `--provider` | `claude` (`AI_API_URL` 설정 시 `openai`) | 요청 형식 `claude`, `openai`, `gemini` |
+| `--model` | `AI_API_MODEL`, 없으면 claude `claude-sonnet-4-6` / openai `gpt-4.1-mini` / gemini `gemini-3.8-flash` | 모델 ID. 품질·비용 비교나 재현을 위해 고정할 때 지정 (아래 "옵션을 둔 이유") |
 | `--fast` | 꺼짐 | `AI_SMALL_FAST_MODEL`(없으면 제공자별 소형 모델)로 생성. `--model` 과 함께 쓸 수 없음 |
 | `--base` (pr 전용) | `origin/HEAD` → `main` → `master` 자동 탐지 | PR 비교 기준 브랜치. 기준 이후 커밋과 미커밋 변경을 함께 수집 |
-| `--temperature` | `0.3` | 0.0(같은 diff 에 거의 같은 결과) ~ 1.0(표기·분량이 흔들림). 실험·비교 목적으로만 올림. 아래 "옵션을 둔 이유" |
+| `--temperature` | `0.3` (gemini 는 생략해 모델 기본값 1.0) | 0.0(같은 diff 에 거의 같은 결과) ~ 1.0(표기·분량이 흔들림). 실험·비교 목적으로만 바꿈. 아래 "옵션을 둔 이유" |
 | `--max-tokens` | commit `512`, pr `1024` | 출력 토큰 상한. 목표 길이가 아니라 안전장치. 부족하면 본문이 잘리고 `[WARN]`, 잘린 출력은 재생성하지 않음 |
 | `--safe-mode` | 꺼짐 | 5장 참고 |
 | `--max-files`, `--max-lines` | `10`, `200` | safe-mode 전송 상한 (파일 수 1~200, 파일당 줄 10~5000). 5장 |
@@ -486,12 +487,12 @@ ai_gitgen/
   git_collector.py   git status --porcelain, git diff, git diff --cached, 새 파일은 diff --no-index
   sanitizer.py       safe-mode 마스킹·제외·제한 (정책 객체 적용, 사용자 규칙 실행 시간 제한)
   prompts.py         시스템/사용자 프롬프트 템플릿, 재생성 프롬프트
-  providers.py       Claude/OpenAI 요청 조립·응답 파싱·오류 번역, urllib 전송, 호출 카운터
+  providers.py       Claude/OpenAI/Gemini 요청 조립·응답 파싱·오류 번역, urllib 전송, 호출 카운터
   model_registry.py  temperature 미지원 모델 목록 (내장 + 학습), JSON 파일
   validators.py      파싱, 규칙 검증, 후처리 (컨벤션 값 적용)
   formatter.py       [INFO]/[WARN]/[ERROR]/[DONE] 로그(stderr), 구분선 블록(stdout)
   errors.py          예외 클래스
-tests/               204개 단위·통합 테스트 (API 키 불필요)
+tests/               219개 단위·통합 테스트 (API 키 불필요)
 docs/                가이드, 학습 자료, 평가 답변, 프롬프트, 결과 보고서, 보너스 보고서, conventions/ 예시
 scripts/             b2-1-convention-check.sh: B2-1 에서 commit·pr 컨벤션 자동 적용을 재현하는 스크립트 (docs/13)
 ```
@@ -532,4 +533,5 @@ API 키 없이 실행됩니다. HTTP 전송은 mock 으로, AI 클라이언트�
 - **키 유출 방지.** `AI_API_BASE_URL` 은 https 만 허용(로컬 테스트 서버만 http)하고, HTTP 리디렉션을 따르지 않아 키 헤더가 다른 호스트로 가지 않습니다.
 - **키는 시작 시 확인, 종료 코드는 상황별로.** 키가 없으면 git 수집 전에 종료 코드 2 로 끝내고(로그에는 환경변수 이름만), 변경 없음은 3, 실행 오류는 1 로 나눠 스크립트에서 분기할 수 있게 했습니다(3장 표).
 - **OpenAI 형식의 출력 상한 필드는 모델군으로 고른다.** 추론 모델(`gpt-5*`, `o1/o3/o4*`)만 `max_completion_tokens` 를 쓰고 나머지는 `max_tokens` 를 보냅니다. 수업용 프록시가 `max_completion_tokens` 를 무시해 `--max-tokens` 가 듣지 않는 것을 사전평가 반영 중 실측으로 발견했습니다([docs/12](docs/12-pre-evaluation-feedback.md)).
+- **Gemini 는 사고 단계를 `low` 로 고정하고 temperature 는 보내지 않는다.** Gemini 는 사고(thinking) 토큰이 `maxOutputTokens` 에 포함되어, 기본 사고 단계로는 `--max-tokens 512` 가 사고에 소진돼 빈 출력이 올 수 있습니다. 커밋 메시지처럼 짧고 정형화된 작업이므로 `thinkingLevel` 을 받는다고 확인된 3.x·4 계열에만 `thinkingConfig.thinkingLevel: "low"` 를 보내고(2.x·gemma 등은 필드 없이), 사고 토큰도 출력 토큰 로그에 합산하며, 출력이 비고 `MAX_TOKENS` 면 사고 토큰 소진 가능성을 `[WARN]` 으로 알립니다. 공식 문서가 Gemini 3 계열은 temperature 를 기본값 1.0 아래로 낮추면 반복·품질 저하가 생길 수 있다고 권고하므로 `--temperature` 를 주지 않으면 요청에서 빼고(로그 `temperature=없음`), 명시하면 그대로 보냅니다. 키는 쿼리 문자열이 아니라 `x-goog-api-key` 헤더로 보내 URL 로그에 남지 않게 했습니다. 기본 모델은 공식 모델 목록이 새 프로젝트에 권장하는 `gemini-3.8-flash`, `--fast` 는 `gemini-3.5-flash-lite` 입니다(2026-10-15 확인). 실제 Gemini API 키로는 검증하지 못했고 공식 문서의 요청·응답 형식 기준으로 구현해 단위 테스트로만 확인했습니다.
 - **safe-mode 가 꺼져 있어도 검사는 한다.** 같은 규칙으로 세어서 경고만 하고 막지는 않습니다. 사용자가 모르고 보내는 일을 줄이면서 스크립트 사용은 깨지 않기 위해서입니다.

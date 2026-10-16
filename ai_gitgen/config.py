@@ -20,27 +20,47 @@ EXIT_INTERRUPTED = 130  # Ctrl+C
 
 # 제공자와 모델
 DEFAULT_PROVIDER = "claude"
-PROVIDER_NAMES = ("claude", "openai")
-DEFAULT_MODELS = {"claude": "claude-sonnet-4-6", "openai": "gpt-4.1-mini"}
+PROVIDER_NAMES = ("claude", "openai", "gemini")
+DEFAULT_MODELS = {
+    "claude": "claude-sonnet-4-6",
+    "openai": "gpt-4.1-mini",
+    "gemini": "gemini-3.8-flash",  # 공식 모델 목록이 새 프로젝트에 권장하는 Flash (2026-10 확인)
+}
 DEFAULT_TEMPERATURE = 0.3
+# --temperature 를 주지 않았을 때 제공자별 값. None 이면 요청에서 빼고 모델 기본값을 쓴다.
+# Gemini 3 계열은 기본값 1.0 아래로 낮추면 반복·품질 저하가 생길 수 있다고 공식 문서가 권고한다.
+DEFAULT_TEMPERATURES: dict[str, float | None] = {"claude": DEFAULT_TEMPERATURE, "openai": DEFAULT_TEMPERATURE, "gemini": None}
 DEFAULT_MAX_TOKENS = {"commit": 512, "pr": 1024}
 REQUEST_TIMEOUT_SECONDS = 60.0
 MAX_API_CALLS_PER_RUN = 2
 
 # 환경변수
 API_KEY_ENV = "AI_API_KEY"
-PROVIDER_KEY_ENVS = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY"}
+PROVIDER_KEY_ENVS = {
+    "claude": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+}
 PROVIDER_ENV = "AI_PROVIDER"
 HOME_ENV = "AI_GITGEN_HOME"
 URL_ENV = "AI_API_URL"  # 프록시·테스트 서버 주소. 설정되면 그 아래 /v1/... 경로를 쓴다
 LEGACY_URL_ENV = "AI_API_BASE_URL"  # 이전 이름. AI_API_URL 이 없을 때만 읽는다
 MODEL_ENV = "AI_API_MODEL"  # 기본 모델 덮어쓰기
 FAST_MODEL_ENV = "AI_SMALL_FAST_MODEL"  # --fast 옵션이 쓰는 작고 빠른 모델
-FAST_MODELS = {"claude": "claude-haiku-4-5", "openai": "gpt-4.1-nano"}  # FAST_MODEL_ENV 가 없을 때
+FAST_MODELS = {  # FAST_MODEL_ENV 가 없을 때
+    "claude": "claude-haiku-4-5",
+    "openai": "gpt-4.1-nano",
+    "gemini": "gemini-3.5-flash-lite",
+}
 PROXY_DEFAULT_PROVIDER = "openai"  # 프록시는 대개 OpenAI 호환 형식을 받는다
 # OpenAI 추론 모델은 출력 상한을 max_completion_tokens 로만 받고 max_tokens 를 400 으로 거부한다.
 # 그 밖의 모델과 OpenAI 호환 프록시·로컬 서버는 max_tokens 만 알아듣는 경우가 많다 (수업용 프록시가 그렇다).
 OPENAI_COMPLETION_TOKENS_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+# Gemini 는 사고(thinking) 토큰이 maxOutputTokens 에 포함된다. 커밋 메시지처럼 짧고 정형화된 작업은 가장 낮은 단계로 고정해
+# 출력 상한이 사고에 소진되는 일을 줄인다. thinkingLevel 을 받는다고 확인된 세대(허용 목록)에만 보내고,
+# 2.x 계열·gemma 등 그 밖의 모델은 필드 없이 보낸다 (모르는 필드는 400 이 되고 재시도 경로가 없다).
+GEMINI_THINKING_LEVEL = "low"
+GEMINI_THINKING_LEVEL_PREFIXES = ("gemini-3", "gemini-4")
 
 # diff 전송량 정책
 GLOBAL_MAX_DIFF_LINES = 2000

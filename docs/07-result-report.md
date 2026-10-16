@@ -87,11 +87,11 @@ safe-mode ON/OFF 비교(`--dry-run` 의 `<diff>` 부분):
 
 ```text
 $ python3 -m unittest discover -s tests -t .
-Ran 204 tests in 3.4s
+Ran 219 tests in 4.8s
 OK
 ```
 
-보너스 1 수행 중 추가한 기능(`pr` 의 브랜치 diff 수집, `--base`, `--fast`, `AI_API_URL`/`AI_API_MODEL`/`AI_SMALL_FAST_MODEL`)에 테스트 14개, 보너스 2 의 컨벤션 설정 파일(`convention.py`, 프롬프트·검증·CLI 반영, 코드 리뷰 반영분 포함)에 33개, 보너스 3 의 safe-mode 정책(정규식 규칙·상한·보안 리뷰 반영)에 23개, 사전평가 반영(키 선검사, 종료 코드, safe-mode 꺼짐 경고, 잘림 시 재생성 생략, OpenAI 출력 상한 필드, 코드 리뷰 반영)에 19개를 더해 115개에서 204개가 되었습니다. 전체 커버리지는 1,497 문장 중 23 미실행으로 98% 를 유지합니다(`cli.py`·`config.py` 100%, `commands.py` 99%, `sanitizer.py` 98%). 아래 모듈별 표는 115개 시점의 측정값입니다.
+보너스 1 수행 중 추가한 기능(`pr` 의 브랜치 diff 수집, `--base`, `--fast`, `AI_API_URL`/`AI_API_MODEL`/`AI_SMALL_FAST_MODEL`)에 테스트 14개, 보너스 2 의 컨벤션 설정 파일(`convention.py`, 프롬프트·검증·CLI 반영, 코드 리뷰 반영분 포함)에 33개, 보너스 3 의 safe-mode 정책(정규식 규칙·상한·보안 리뷰 반영)에 23개, 사전평가 반영(키 선검사, 종료 코드, safe-mode 꺼짐 경고, 잘림 시 재생성 생략, OpenAI 출력 상한 필드, 코드 리뷰 반영)에 19개, Google Gemini 제공자(generateContent 요청·응답·오류 번역, 사고 단계 low 고정, temperature 기본 생략)에 15개를 더해 115개에서 219개가 되었습니다. 전체 커버리지는 1,561 문장 중 22 미실행으로 99% 입니다(`cli.py`·`config.py` 100%, `commands.py`·`providers.py` 99%, `sanitizer.py` 98%). 아래 모듈별 표는 115개 시점의 측정값입니다.
 
 커버리지 (`pytest --cov=ai_gitgen`, 외부 도구로 측정):
 

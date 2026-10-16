@@ -26,6 +26,7 @@ BUILTIN_NO_TEMPERATURE_MODELS: dict[str, frozenset[str]] = {
             "claude-haiku-5-5",
         }
     ),
+    "gemini": frozenset(),  # 모든 Gemini 모델이 temperature(0~2) 를 받는다
     "openai": frozenset(
         {
             "gpt-5",

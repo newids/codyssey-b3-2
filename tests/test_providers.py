@@ -17,6 +17,15 @@ OPENAI_OK = {
     "choices": [{"message": {"content": "feat: 제목"}, "finish_reason": "length"}],
     "usage": {"prompt_tokens": 90, "completion_tokens": 10},
 }
+GEMINI_OK = {
+    "candidates": [
+        {
+            "content": {"role": "model", "parts": [{"text": "생각...", "thought": True}, {"text": "feat: 제목\n\n- 본문"}]},
+            "finishReason": "STOP",
+        }
+    ],
+    "usageMetadata": {"promptTokenCount": 70, "candidatesTokenCount": 12, "thoughtsTokenCount": 8, "totalTokenCount": 90},
+}
 
 
 def settings(provider: str = "claude", temperature: float | None = 0.3, model: str = "m") -> GenerationSettings:
@@ -223,8 +232,109 @@ class AIClientTest(unittest.TestCase):
 
     def test_unknown_provider_is_rejected(self) -> None:
         with self.assertRaises(AIRequestError):
-            providers.get_provider("gemini")
+            providers.get_provider("mistral")
+        self.assertIsInstance(providers.get_provider("gemini"), providers.GeminiProvider)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeminiProviderTest(unittest.TestCase):
+    provider = providers.GeminiProvider()
+
+    def test_prepare_uses_header_key_and_generate_content_body(self) -> None:
+        request = self.provider.prepare("SYS", "USER", settings("gemini", model="gemini-3.8-flash"), "key123")
+        self.assertEqual(request.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent")
+        self.assertNotIn("key123", request.url)  # 키는 쿼리 문자열이 아니라 헤더로
+        self.assertEqual(request.headers["x-goog-api-key"], "key123")
+        self.assertEqual(request.body["systemInstruction"], {"parts": [{"text": "SYS"}]})
+        self.assertEqual(request.body["contents"], [{"role": "user", "parts": [{"text": "USER"}]}])
+        self.assertEqual(
+            request.body["generationConfig"],
+            {"maxOutputTokens": 256, "temperature": 0.3, "thinkingConfig": {"thinkingLevel": "low"}},
+        )
+
+    def test_temperature_omitted_and_legacy_models_get_no_thinking_level(self) -> None:
+        for model in ("gemini-2.5-flash", "gemma-3-27b-it", "learnlm-2.0", "custom-proxy-model"):
+            request = self.provider.prepare("S", "U", settings("gemini", temperature=None, model=model), "k")
+            self.assertEqual(request.body["generationConfig"], {"maxOutputTokens": 256}, model)
+        for model in ("gemini-3.5-flash-lite", "google/gemini-4-argon", "GEMINI-3.8-FLASH", "models/gemini-3-flash-preview"):
+            request = self.provider.prepare("S", "U", settings("gemini", model=model), "k")
+            self.assertIn("thinkingConfig", request.body["generationConfig"], model)
+
+    def test_endpoint_path_strips_models_prefix_and_encodes_the_rest(self) -> None:
+        self.assertEqual(self.provider.endpoint_path("models/gemini-3.8-flash"), "/v1beta/models/gemini-3.8-flash:generateContent")
+        self.assertEqual(self.provider.endpoint_path("vendor/gemini-x"), "/v1beta/models/vendor%2Fgemini-x:generateContent")
+        encoded = self.provider.endpoint_path("../x?key=1#frag")
+        self.assertNotIn("?", encoded)
+        self.assertNotIn("#", encoded)
+        self.assertNotIn("/x", encoded.replace("/v1beta/models/", ""))
+
+    def test_prepared_request_repr_hides_key(self) -> None:
+        request = self.provider.prepare("S", "U", settings("gemini", model="gemini-3.8-flash"), "sk-secret")
+        self.assertNotIn("sk-secret", repr(request))
+        self.assertNotIn("sk-secret", str(request))
+
+    def test_proxy_base_url_keeps_generate_content_path(self) -> None:
+        with mock.patch.dict("os.environ", {"AI_API_URL": "https://proxy.example.com/"}):
+            request = self.provider.prepare("S", "U", settings("gemini", model="gemini-3.8-flash"), "k")
+        self.assertEqual(request.url, "https://proxy.example.com/v1beta/models/gemini-3.8-flash:generateContent")
+
+    def test_parse_skips_thought_parts_and_counts_thought_tokens(self) -> None:
+        result = self.provider.parse(GEMINI_OK)
+        self.assertEqual(result.text, "feat: 제목\n\n- 본문")
+        self.assertEqual(result.stop_reason, "end_turn")
+        self.assertEqual((result.input_tokens, result.output_tokens), (70, 20))
+
+    def test_parse_maps_finish_reasons_and_blocked_prompt(self) -> None:
+        for reason, expected in (("MAX_TOKENS", "max_tokens"), ("SAFETY", "refusal"), ("RECITATION", "refusal"), ("OTHER", "other")):
+            payload = {"candidates": [{"content": {"parts": [{"text": "x"}]}, "finishReason": reason}]}
+            self.assertEqual(self.provider.parse(payload).stop_reason, expected, reason)
+        blocked = {"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}, "usageMetadata": {"promptTokenCount": 5}}
+        result = self.provider.parse(blocked)
+        self.assertEqual((result.text, result.stop_reason, result.input_tokens), ("", "refusal", 5))
+        not_blocked = {"promptFeedback": {"blockReason": "X"}, "candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}]}
+        self.assertEqual(self.provider.parse(not_blocked).stop_reason, "end_turn")
+        self.assertEqual(self.provider.parse({}).text, "")
+
+    def test_parse_survives_malformed_payloads(self) -> None:
+        payloads = (
+            {"candidates": None},
+            {"candidates": "oops"},
+            {"candidates": ["str"]},
+            {"candidates": [{"content": ["list"]}]},
+            {"candidates": [{"content": {"parts": "str"}}]},
+            {"candidates": [{"content": {"parts": [{"text": None}, {"text": 7}, "x"]}}], "usageMetadata": []},
+        )
+        for payload in payloads:
+            result = self.provider.parse(payload)
+            self.assertEqual((result.text, result.output_tokens), ("", 0), payload)
+
+    def test_thought_only_max_tokens_reply_is_empty_text(self) -> None:
+        payload = {
+            "candidates": [{"content": {"parts": [{"text": "생각", "thought": True}]}, "finishReason": "MAX_TOKENS"}],
+            "usageMetadata": {"promptTokenCount": 50, "candidatesTokenCount": 0, "thoughtsTokenCount": 256},
+        }
+        result = self.provider.parse(payload)
+        self.assertEqual((result.text, result.stop_reason, result.output_tokens), ("", "max_tokens", 256))
+
+    def test_translate_errors_include_status_name_and_hints(self) -> None:
+        bad_key = {"error": {"code": 400, "message": "API key not valid. Please pass a valid API key.", "status": "INVALID_ARGUMENT"}}
+        text = str(self.provider.translate_error(400, bad_key, "gemini-3.8-flash"))
+        self.assertIn("[INVALID_ARGUMENT]", text)
+        self.assertIn("GEMINI_API_KEY", text)
+        quota = {"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}}
+        self.assertIn("할당량", str(self.provider.translate_error(429, quota, "m")))
+        temp = {"error": {"code": 400, "message": "temperature is not supported for this model", "status": "INVALID_ARGUMENT"}}
+        self.assertIsInstance(self.provider.translate_error(400, temp, "m"), UnsupportedParameterError)
+        not_found = {"error": {"code": 404, "message": "models/x is not found", "status": "NOT_FOUND"}}
+        self.assertIn("--model", str(self.provider.translate_error(404, not_found, "x")))
+        no_status = {"error": {"message": "plain"}}
+        self.assertIn("plain", str(self.provider.translate_error(500, no_status, "x")))
+        self.assertNotIn("[]", str(self.provider.translate_error(500, no_status, "x")))
+
+    def test_list_wrapped_error_body_is_unwrapped(self) -> None:
+        raw = json.dumps([{"error": {"code": 400, "message": "bad", "status": "INVALID_ARGUMENT"}}]).encode()
+        self.assertEqual(providers._read_json(raw)["error"]["message"], "bad")
+        self.assertEqual(providers._read_json(b"[1, 2]"), {})

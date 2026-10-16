@@ -17,7 +17,7 @@ class CliTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         env = {"AI_GITGEN_HOME": self._tmp.name, "AI_API_KEY": "test-key"}
-        for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AI_PROVIDER", "AI_API_URL", "AI_API_BASE_URL", "AI_API_MODEL", "AI_SMALL_FAST_MODEL"):
+        for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "AI_PROVIDER", "AI_API_URL", "AI_API_BASE_URL", "AI_API_MODEL", "AI_SMALL_FAST_MODEL"):
             os.environ.pop(name, None)
         self._patches = [
             mock.patch.dict(os.environ, env),
@@ -96,6 +96,41 @@ class CommitCommandTest(CliTestCase):
         code, _, err = self.run_cli("commit", "--fast", "--model", "x")
         self.assertEqual(code, 2)
         self.assertIn("함께 쓸 수 없습니다", err)
+
+    def test_gemini_provider_uses_gemini_defaults_and_key(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_API_KEY": "", "GEMINI_API_KEY": "g-key"}):
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            code, _, err = self.run_cli("commit", "--provider", "gemini")
+            default_seen = self.client.settings_seen[0]
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            self.run_cli("commit", "--provider", "gemini", "--fast")
+            fast_seen = self.client.settings_seen[0]
+        self.assertEqual(code, 0)
+        self.assertEqual((default_seen.provider, default_seen.model, default_seen.temperature), ("gemini", "gemini-3.8-flash", None))
+        self.assertIn("temperature=없음", err)  # Gemini 는 모델 기본값(1.0) 을 쓰도록 생략
+        self.assertEqual(fast_seen.model, "gemini-3.5-flash-lite")
+        self.assertIn("[INFO] API 키 확인: GEMINI_API_KEY 설정됨", err)
+        self.assertNotIn("g-key", err)
+
+    def test_gemini_explicit_temperature_is_sent_and_rejection_is_learned_under_gemini_key(self) -> None:
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "g-key"}):
+            FakeClient.queue = [result(GOOD_COMMIT)]
+            self.run_cli("commit", "--provider", "gemini", "--temperature", "0.2")
+            self.assertEqual(self.client.settings_seen[0].temperature, 0.2)
+            FakeClient.queue = [UnsupportedParameterError("gemini-x", "temperature", "temperature is not supported"), result(GOOD_COMMIT)]
+            code, _, err = self.run_cli("commit", "--provider", "gemini", "--model", "gemini-x", "--temperature", "0.5")
+        self.assertEqual(code, 0)
+        self.assertEqual([s.temperature for s in self.client.settings_seen], [0.5, None])
+        self.assertIn("temperature 미지원 모델로 기록했습니다", err)
+        _, out, _ = self.run_cli("models", "list")
+        self.assertIn("gemini", out)
+        self.assertIn("gemini-x", out)
+
+    def test_empty_output_at_max_tokens_gets_thinking_hint(self) -> None:
+        FakeClient.queue = [result("", stop_reason="max_tokens")]
+        code, _, err = self.run_cli("commit")
+        self.assertEqual(code, 1)
+        self.assertIn("[WARN] 출력이 비어 있고 max_tokens 에 도달했습니다 (출력 토큰 20). 사고(thinking) 토큰이", err)
 
     def test_explicit_provider_env_overrides_proxy_default(self) -> None:
         with mock.patch.dict(os.environ, {"AI_API_URL": "https://copa.example.kr", "AI_PROVIDER": "claude"}):

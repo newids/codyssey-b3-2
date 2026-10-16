@@ -111,6 +111,8 @@ def _resolve_settings(args: argparse.Namespace, registry: ModelRegistry, kind: s
     model = config.resolve_model(args.provider, args.model, args.fast)
     max_tokens = args.max_tokens or config.DEFAULT_MAX_TOKENS[kind]
     temperature: float | None = args.temperature
+    if temperature is None:  # --temperature 를 안 줬으면 제공자별 기본값 (Gemini 는 모델 기본값을 쓰도록 생략)
+        temperature = config.DEFAULT_TEMPERATURES[args.provider]
     source = registry.rejects_temperature(args.provider, model)
     if source and temperature is not None:
         formatter.warn(f"'{model}' 는 temperature 를 지원하지 않아 생략합니다 (출처: {source})")
@@ -143,7 +145,12 @@ def _generate_with_fallback(
 
 
 def _warn_stop_reason(result: GenerationResult) -> None:
-    if result.stop_reason == "max_tokens":
+    if result.stop_reason == "max_tokens" and not result.text.strip():
+        formatter.warn(
+            f"출력이 비어 있고 max_tokens 에 도달했습니다 (출력 토큰 {result.output_tokens}). "
+            "사고(thinking) 토큰이 상한을 다 썼을 수 있습니다. --max-tokens 를 크게 늘려 다시 실행하세요."
+        )
+    elif result.stop_reason == "max_tokens":
         formatter.warn("출력이 max_tokens 에서 잘렸습니다. --max-tokens 를 늘려 보세요.")
     elif result.stop_reason == "refusal":
         formatter.warn("모델이 요청을 거절했습니다. diff 내용을 확인하거나 --safe-mode 를 사용해 보세요.")
